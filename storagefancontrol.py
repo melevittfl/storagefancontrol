@@ -4,16 +4,22 @@ This program controls the chassis fan speed through PWM based on the temperature
 of the hottest hard drive in the chassis. It uses the IBM M1015 or LSI tool
 'MegaCli' for reading hard drive temperatures.
 """
-import os
+import errno
 import sys
 import subprocess
 import re
 import time
-import syslog
 import multiprocessing as mp
 import copy_reg
 import types
 import ConfigParser
+
+import fcntl
+import logging
+import logging.config
+from log_config import *
+
+
 
 def _reduce_method(meth):
     """
@@ -90,31 +96,32 @@ class Smart:
         """
         self.block_devices = ""
         self.device_filter = "sd"
+        self.boot_device = "ada0"
         self.highest_temperature = 0
         self.get_block_devices()
         self.smart_workers = 24
 
-    def filter_block_devices(self, block_devices):
-        """
-        Filter out devices like 'loop, ram'.
-        """
-        devices = []
-        for device in block_devices:
-            if not device.find(self.device_filter):
-                devices.append(device)
-        return devices
-
     def get_block_devices(self):
         """
-        Retrieve the list of block devices.
-        By default only lists /dev/sd* devices.
-        Configure the appropriate device filter with
-        setting <object>.device_filter to some other value.
+        Call 'geom part status -s' to get a list of drives
         """
-        devicepath = "/sys/block"
-        block_devices = os.listdir(devicepath)
-        block_devices.sort()
-        self.block_devices = self.filter_block_devices(block_devices)
+        try:
+            child = subprocess.Popen(['geom', 'part', 'status', '-s'], stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE)
+        except OSError, e:
+            logging.error("Error reading block devices")
+            logging.error(e)
+            sys.exit(1)
+
+        stdout, stderr = child.communicate()
+
+        devices = set()
+        for line in stdout.splitlines():
+            devices.add(line.split()[2])
+
+        devices.discard(self.boot_device)
+
+        self.block_devices = devices
 
     def get_smart_data(self, device):
         """
@@ -125,8 +132,8 @@ class Smart:
         device = "/dev/" + device
 
         try:
-            child = subprocess.Popen(['smartctl',  '-a',  '-d',  'ata', \
-                                    device], stdout=subprocess.PIPE, \
+            child = subprocess.Popen(['smartctl', '-a', device],
+                                     stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE)
         except OSError:
             print "Executing smartctl gave an error,"
@@ -134,14 +141,6 @@ class Smart:
             sys.exit(1)
 
         rawdata = child.communicate()
-
-        if child.returncode:
-            child = subprocess.Popen(['smartctl',  '-a',  device],
-                                     stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE)
-            rawdata = child.communicate()
-            if child.returncode == 1:
-                return ""
 
         smartdata = rawdata[0]
         return smartdata
@@ -192,95 +191,10 @@ class Smart:
         pool.close()
 
         for temperature in results:
+            print temperature
             if temperature > highest_temperature:
                 highest_temperature = temperature
         self.highest_temperature = highest_temperature
-
-        return self.highest_temperature
-
-class Controller:
-    """
-    Reading temperature data from IBM / LSI controllers.
-    """
-    def __init__(self):
-        self.megacli = "/opt/MegaRAID/MegaCli/megacli"
-        self.ports_per_controller = 8
-        self.highest_temperature = 0
-
-    def number_of_controllers(self):
-        """
-        Get the number of LSI HBAs on the system.
-        In my case, I have 3 controllers with 8 drives each.
-        """
-        rawdata = subprocess.Popen(\
-            [self.megacli,'-cfgdsply','-aALL'],\
-             stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[0]
-        regex = re.compile('Adapter:.*')
-        match = regex.findall(rawdata)
-        return len(match)
-
-    def get_drive_temp(self, controller, port):
-        """
-        Get the temperature from an individual drive through the megacli
-        utility. The return value is a positive integer that specifies the
-        temperature in Celcius.
-        """
-        rawdata =  subprocess.Popen(\
-            [self.megacli,  '-pdinfo', '-physdrv', '[64:' +\
-               str(port) +']', '-a' + str(controller)],\
-               stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[0]
-
-        regex = re.compile('Drive Temperature :(.*)')
-        match = regex.search(rawdata)
-        try:
-            temp = match.group(1).split("C")[0]
-
-            # Ugly hack: issue with some old WD drives
-            # Controller reports 65C for them.
-            if temp == "N/A":
-                temp = "?"
-            if int(temp) >= 60:
-                temp = "?"
-            return temp
-
-        except(AttributeError):
-            return ""
-        except(IndexError):
-            return ""
-
-    def fetch_data(self):
-        """
-        Returns a two-dimentional list containing
-        the temperature of each drive. The first dimension is the
-        chassis. The second dimension is the drive.
-        """
-        drivearray = \
-             [[0 for x in xrange(self.ports_per_controller)]\
-                for x in xrange(self.number_of_controllers())]
-
-        for controller in xrange(self.number_of_controllers()):
-            for port in xrange(self.ports_per_controller):
-                disk = self.get_drive_temp(controller, port)
-                if len(disk) == 0:
-                    disk = ""
-                drivearray[controller][port] = disk
-
-        return drivearray
-
-    def get_highest_temperature(self):
-        """
-        Walks through the list of all the drives and compares
-        all drive temperatures. The highest drive temperature
-        is returned as an integer, representing degrees of Celcius.
-        """
-
-        data = self.fetch_data()
-        temperature = 0
-        for controller in data:
-            for disk in controller:
-                if disk > temperature:
-                    temperature = disk
-        self.highest_temperature = int(temperature)
 
         return self.highest_temperature
 
@@ -298,28 +212,21 @@ class FanControl:
         Generic init method.
         """
         self.polling_interval = 30
-        self.pwm_max = 255
-        self.pwm_min = 100
-        self.pwm_safety = 160
+        self.pwm_max = 64
+        self.pwm_min = 1
+        self.pwm_safety = 32
         self.fan_speed = 50
         self.fan_control_enable = ""
         self.fan_control_device = ""
         self.debug = False
+        self.pwm_value = 0
+        self.previous_pwm_value = 0
 
     def get_pwm(self):
         """
         Return the current PWM speed setting.
         """
-        PWM=""
-
-        for device in self.fan_control_device:
-            filename = device
-            filehandle = open(filename, 'r')
-            pwm_value = int(filehandle.read().strip())
-            filehandle.close()
-            PWM = PWM + " " + str(pwm_value)
-
-        return PWM
+        return self.pwm_value
 
     def set_pwm(self, value):
         """
@@ -327,21 +234,59 @@ class FanControl:
         pwm_min and pwm_max. Values outside these ranges
         are set to either pwm_min or pwm_max as a safety
         precaution.
+
+        ipmitool raw 0x3a 0x01 0x64 0x00 0x64 0x00 0x64 0x64 0x00 0x00
+                                CPU     REAR       FRNT1 FRNT2
+
+        Setting 0x00 means the BIOS controls the fan speed automatically
+
         """
-        self.enable_fan_control()
 
-        for device in self.fan_control_device:
+        pwm_max = self.pwm_max
+        pwm_min = self.pwm_min
 
-            filename = device
-            pwm_max = self.pwm_max
-            pwm_min = self.pwm_min
+        value = pwm_max if value > pwm_max else value
 
-            value = pwm_max if value > pwm_max else value
-            value = pwm_min if value < pwm_min else value
+        if value < pwm_min:
+            logging.info("PWM value is less than the minimum. Setting fans to BIOS control")
+            value = 0
 
-            filehandle = open(filename, 'w')
-            filehandle.write(str(value))
-            filehandle.close()
+
+
+
+        IPMITOOL="/usr/local/bin/ipmitool"
+        raw_rear = value/2  # Spin up the rear case fan at half the speed of the front fans
+
+        if raw_rear < 20:
+            raw_rear = "00"  # Set to auto
+
+        CPU='0x00'
+        REAR='0x' + str(raw_rear)
+        FRNT1='0x' + str(value)
+        FRNT2='0x' + str(value)
+
+        ipmitool_args = "raw 0x3a 0x01 %s 0x00 %s 0x00 %s %s 0x00 0x00" % (CPU, REAR, FRNT1, FRNT2)
+
+        logging.debug(ipmitool_args)
+
+        ipmi_cmd = [IPMITOOL] + (ipmitool_args.split())
+
+        self.pwm_value = value
+
+        if self.previous_pwm_value != value:
+            logging.info("PWM value changed. Updating Fan speed")
+            try:
+                child = subprocess.Popen(ipmi_cmd, stdout=subprocess.PIPE, \
+                                         stderr=subprocess.PIPE)
+            except OSError:
+                print "Executing ipmitool gave an error,"
+                sys.exit(1)
+
+            output = child.communicate()
+
+            self.previous_pwm_value = value
+        else:
+            logging.debug("PWM value unchanged")
 
     def set_fan_speed(self, percent):
         """
@@ -353,35 +298,6 @@ class FanControl:
         pwm = percent * one_percent
         self.set_pwm(int(pwm))
 
-    def enable_fan_control(self):
-        """
-        Tries to enable manual fan speed control."
-        """
-        for device in self.fan_control_device:
-            filename = device
-            filehandle = open(filename, 'w')
-            try:
-                filehandle.write('1')
-                filehandle.close()
-            except IOError:
-                message = "Error enabling fan control. Sufficient privileges?"
-                print message
-                sys.exit(1)
-
-
-def is_debug_enabled():
-    """
-    Set debug if enabled.
-    """
-    try:
-        debug = os.environ['DEBUG']
-        if debug == "True":
-            return True
-        else:
-            return False
-
-    except (KeyError):
-        return False
 
 def log(temperature, chassis, pid):
     """
@@ -400,20 +316,16 @@ def log(temperature, chassis, pid):
     formatstring = "Temp: {:2} | FAN: {:2}% | PWM: {:3} | P={:3} | I={:3} | "\
                    "D={:3} | Err={:3}|"
 
-    msg = formatstring.format(*all_vars)
+    logging.info(formatstring.format(*all_vars))
 
-    syslog.openlog("SFC")
-    syslog.syslog(msg)
-
-    if is_debug_enabled():
-        print msg
 
 def read_config():
     """ Main"""
-    config_file = "/etc/storagefancontrol"
+    config_file = "./storagefancontrol.conf"
     conf = ConfigParser.SafeConfigParser()
     conf.read(config_file)
     return conf
+
 
 def get_pid_settings(config):
     """ Get PID settings """
@@ -431,6 +343,7 @@ def get_pid_settings(config):
 
     return pid
 
+
 def get_temp_source(config):
     """ Configure temperature source."""
 
@@ -439,18 +352,13 @@ def get_temp_source(config):
     if mode == "smart":
         temp_source = Smart()
         temp_source.device_filter = config.get("Smart", "device_filter")
+        temp_source.boot_device = config.get("Smart", "boot_device")
         temp_source.smart_workers = config.getint("Smart", "smart_workers")
-        return temp_source
-
-    if mode == "controller":
-        temp_source = Controller()
-        temp_source.megacli = config.get("Controller", "megacli")
-        temp_source.ports_per_controller = config.getint("Controller", \
-                                         "ports_per_controller")
         return temp_source
 
     print "Mode not set, check config."
     sys.exit(1)
+
 
 def get_chassis_settings(config):
     """ Initialise chassis fan settings. """
@@ -459,11 +367,8 @@ def get_chassis_settings(config):
     chassis.pwm_min = config.getint("Chassis", "pwm_min")
     chassis.pwm_max = config.getint("Chassis", "pwm_max")
     chassis.pwm_safety = config.getint("Chassis", "pwm_safety")
-    chassis.fan_control_enable = config.get( "Chassis", "fan_control_enable")
-    chassis.fan_control_enable = chassis.fan_control_enable.split(",")
-    chassis.fan_control_device = config.get("Chassis", "fan_control_device")
-    chassis.fan_control_device = chassis.fan_control_device.split(",")
     return chassis
+
 
 def main():
     """
@@ -491,6 +396,17 @@ def main():
         chassis.set_pwm(chassis.pwm_safety)
         sys.exit(1)
 
+
 if __name__ == "__main__":
+    logging.config.dictConfig(LOG_SETTINGS)
+
+    f = open('.lock', 'w')
+    try:
+        fcntl.lockf(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError as e:
+        if e.errno == errno.EAGAIN:
+            logging.error("Another instance already running")
+            sys.exit(-1)
+
     main()
 
