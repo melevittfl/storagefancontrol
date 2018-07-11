@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/local/bin/python2
 """
 This program controls the chassis fan speed through PWM based on the temperature
 of the hottest hard drive in the chassis. It uses the IBM M1015 or LSI tool
@@ -132,7 +132,7 @@ class Smart:
         device = "/dev/" + device
 
         try:
-            child = subprocess.Popen(['smartctl', '-a', device],
+            child = subprocess.Popen(['/usr/local/sbin/smartctl', '-a', device],
                                      stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE)
         except OSError:
@@ -248,7 +248,7 @@ class FanControl:
         value = pwm_max if value > pwm_max else value
 
         if value < pwm_min:
-            logging.info("PWM value is less than the minimum. Setting fans to BIOS control")
+            logging.debug("PWM value is less than the minimum. Setting fans to BIOS control")
             value = 0
 
 
