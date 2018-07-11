@@ -191,7 +191,6 @@ class Smart:
         pool.close()
 
         for temperature in results:
-            print temperature
             if temperature > highest_temperature:
                 highest_temperature = temperature
         self.highest_temperature = highest_temperature
