@@ -2,5 +2,5 @@
 
 cd /mnt/tank/home/mlevitt/storage_control
 
-./storagefancontrol.py
+./storagefancontrol.py > /dev/null 2>&1 & disown
 
