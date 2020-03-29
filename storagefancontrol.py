@@ -1,4 +1,4 @@
-#!/usr/local/bin/python2
+#!/usr/local/bin/python
 """
 This program controls the chassis fan speed through PWM based on the temperature
 of the hottest hard drive in the chassis. It uses the IBM M1015 or LSI tool
@@ -108,7 +108,7 @@ class Smart:
         try:
             child = subprocess.Popen(['geom', 'part', 'status', '-s'], stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE)
-        except OSError, e:
+        except OSError as e:
             logging.error("Error reading block devices")
             logging.error(e)
             sys.exit(1)
@@ -254,7 +254,10 @@ class FanControl:
 
 
         IPMITOOL="/usr/local/bin/ipmitool"
-        raw_rear = value/2  # Spin up the rear case fan at half the speed of the front fans
+        if value < 40:
+            raw_rear = value/2  # Spin up the rear case fan at half the speed of the front fans
+        else:
+            raw_rear = value
 
         if raw_rear < 20:
             raw_rear = "00"  # Set to auto
@@ -273,7 +276,7 @@ class FanControl:
         self.pwm_value = value
 
         if self.previous_pwm_value != value:
-            logging.info("PWM value changed. Updating Fan speed")
+            logging.info("PWM value changed. Updating fan speed")
             try:
                 child = subprocess.Popen(ipmi_cmd, stdout=subprocess.PIPE, \
                                          stderr=subprocess.PIPE)
@@ -312,7 +315,7 @@ def log(temperature, chassis, pid):
     PCT = str(chassis.fan_speed)
 
     all_vars = [TMP, PCT, PWM, P, I, D, E]
-    formatstring = "Temp: {:2} | FAN: {:2}% | PWM: {:3} | P={:3} | I={:3} | "\
+    formatstring = "Temp: {:2} | Fan: {:2}% | PWM: {:3} | P={:3} | I={:3} | "\
                    "D={:3} | Err={:3}|"
 
     logging.info(formatstring.format(*all_vars))
@@ -320,7 +323,7 @@ def log(temperature, chassis, pid):
 
 def read_config():
     """ Main"""
-    config_file = "./storagefancontrol.conf"
+    config_file = "./storagefancontrol.conf"  # FIXME: Move to real spot
     conf = ConfigParser.SafeConfigParser()
     conf.read(config_file)
     return conf
