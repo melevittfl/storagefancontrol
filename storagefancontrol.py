@@ -117,7 +117,7 @@ class Smart:
 
         devices = set()
         for line in stdout.splitlines():
-            devices.add(line.split()[2])
+            devices.add(str(line.split()[2], 'utf-8'))
 
         devices.discard(self.boot_device)
 
@@ -142,7 +142,7 @@ class Smart:
 
         rawdata = child.communicate()
 
-        smartdata = rawdata[0]
+        smartdata = str(rawdata[0], 'utf-8')
         return smartdata
 
     def get_parameter_from_smart(self, data, parameter, distance):
@@ -175,8 +175,8 @@ class Smart:
         Get the current temperature of a block device.
         """
         smart_data = self.get_smart_data(device)
-        temperature = int(self.get_parameter_from_smart(smart_data, \
-                                            'Temperature_Celsius', 10))
+        temperature = int(self.get_parameter_from_smart(smart_data,
+                                                        'Temperature_Celsius', 10))
         return temperature
 
     def get_highest_temperature(self):
@@ -324,7 +324,7 @@ def log(temperature, chassis, pid):
 def read_config():
     """ Main"""
     config_file = "./storagefancontrol.conf"  # FIXME: Move to real spot
-    conf = configparser.SafeConfigParser()
+    conf = configparser.ConfigParser()
     conf.read(config_file)
     return conf
 
