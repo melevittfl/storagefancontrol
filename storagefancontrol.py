@@ -20,7 +20,6 @@ import logging.config
 from log_config import *
 
 
-
 def _reduce_method(meth):
     """
     This is a hack to work around the fact that multiprocessing
@@ -385,6 +384,9 @@ def main():
     chassis = get_chassis_settings(config)
     pid = get_pid_settings(config)
     temp_source = get_temp_source(config)
+
+    # Set the fan to the chassis min on startup.
+    chassis.set_pwm(chassis.pwm_min)
 
     try:
         while True:
