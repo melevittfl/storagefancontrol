@@ -10,9 +10,9 @@ import subprocess
 import re
 import time
 import multiprocessing as mp
-import copy_reg
+import copyreg
 import types
-import ConfigParser
+import configparser
 
 import fcntl
 import logging
@@ -83,7 +83,7 @@ class PID:
         """
         self.set_point = set_point
 
-copy_reg.pickle(types.MethodType, _reduce_method)
+copyreg.pickle(types.MethodType, _reduce_method)
 class Smart:
     """
     Uses SMART data from storage devices to determine the temperature
@@ -136,8 +136,8 @@ class Smart:
                                      stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE)
         except OSError:
-            print "Executing smartctl gave an error,"
-            print "is smartmontools installed?"
+            print("Executing smartctl gave an error,")
+            print("is smartmontools installed?")
             sys.exit(1)
 
         rawdata = child.communicate()
@@ -281,7 +281,7 @@ class FanControl:
                 child = subprocess.Popen(ipmi_cmd, stdout=subprocess.PIPE, \
                                          stderr=subprocess.PIPE)
             except OSError:
-                print "Executing ipmitool gave an error,"
+                print("Executing ipmitool gave an error,")
                 sys.exit(1)
 
             output = child.communicate()
@@ -324,7 +324,7 @@ def log(temperature, chassis, pid):
 def read_config():
     """ Main"""
     config_file = "./storagefancontrol.conf"  # FIXME: Move to real spot
-    conf = ConfigParser.SafeConfigParser()
+    conf = configparser.SafeConfigParser()
     conf.read(config_file)
     return conf
 
@@ -358,7 +358,7 @@ def get_temp_source(config):
         temp_source.smart_workers = config.getint("Smart", "smart_workers")
         return temp_source
 
-    print "Mode not set, check config."
+    print("Mode not set, check config.")
     sys.exit(1)
 
 
@@ -411,4 +411,3 @@ if __name__ == "__main__":
             sys.exit(-1)
 
     main()
-
