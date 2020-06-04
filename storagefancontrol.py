@@ -27,6 +27,7 @@ def _reduce_method(meth):
     """
     return (getattr, (meth.__self__, meth.__func__.__name__))
 
+
 class PID:
     """
     Discrete PID control
@@ -36,8 +37,7 @@ class PID:
     between the current temperature and the desired (target) temperature.
     """
 
-    def __init__(self, P, I, D, Derivator, Integrator, \
-                Integrator_max, Integrator_min):
+    def __init__(self, P, I, D, Derivator, Integrator, Integrator_max, Integrator_min):
         """
         Generic initialisation of local variables.
         """
@@ -60,7 +60,7 @@ class PID:
         self.error = current_value - int(self.set_point)
 
         self.P_value = self.Kp * self.error
-        self.D_value = self.Kd * ( self.error + self.Derivator)
+        self.D_value = self.Kd * (self.error + self.Derivator)
         self.Derivator = self.error
 
         self.Integrator = self.Integrator + self.error
@@ -82,7 +82,10 @@ class PID:
         """
         self.set_point = set_point
 
+
 copyreg.pickle(types.MethodType, _reduce_method)
+
+
 class Smart:
     """
     Uses SMART data from storage devices to determine the temperature
@@ -105,8 +108,11 @@ class Smart:
         Call 'geom part status -s' to get a list of drives
         """
         try:
-            child = subprocess.Popen(['geom', 'part', 'status', '-s'], stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE)
+            child = subprocess.Popen(
+                ["geom", "part", "status", "-s"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
         except OSError as e:
             logging.error("Error reading block devices")
             logging.error(e)
@@ -116,7 +122,7 @@ class Smart:
 
         devices = set()
         for line in stdout.splitlines():
-            devices.add(str(line.split()[2], 'utf-8'))
+            devices.add(str(line.split()[2], "utf-8"))
 
         devices.discard(self.boot_device)
 
@@ -131,9 +137,11 @@ class Smart:
         device = "/dev/" + device
 
         try:
-            child = subprocess.Popen(['/usr/local/sbin/smartctl', '-a', device],
-                                     stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE)
+            child = subprocess.Popen(
+                ["/usr/local/sbin/smartctl", "-a", device],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
         except OSError:
             print("Executing smartctl gave an error,")
             print("is smartmontools installed?")
@@ -141,21 +149,21 @@ class Smart:
 
         rawdata = child.communicate()
 
-        smartdata = str(rawdata[0], 'utf-8')
+        smartdata = str(rawdata[0], "utf-8")
         return smartdata
 
     def get_parameter_from_smart(self, data, parameter, distance):
         """
         Retreives the desired value from the raw smart data.
         """
-        regex = re.compile(parameter + '(.*)')
+        regex = re.compile(parameter + "(.*)")
         match = regex.search(data)
 
         if match:
             tmp = match.group(1)
             length = len(tmp.split("   "))
             if length <= distance:
-                distance = length-1
+                distance = length - 1
 
             #
             # SMART data is often a bit of a mess,  so this
@@ -165,7 +173,7 @@ class Smart:
             try:
                 model = match.group(1).split("   ")[distance].split(" ")[1]
             except:
-                model = match.group(1).split("   ")[distance+1].split(" ")[1]
+                model = match.group(1).split("   ")[distance + 1].split(" ")[1]
             return str(model)
         return 0
 
@@ -174,8 +182,9 @@ class Smart:
         Get the current temperature of a block device.
         """
         smart_data = self.get_smart_data(device)
-        temperature = int(self.get_parameter_from_smart(smart_data,
-                                                        'Temperature_Celsius', 10))
+        temperature = int(
+            self.get_parameter_from_smart(smart_data, "Temperature_Celsius", 10)
+        )
         return temperature
 
     def get_highest_temperature(self):
@@ -246,27 +255,33 @@ class FanControl:
         value = pwm_max if value > pwm_max else value
 
         if value < pwm_min:
-            logging.debug("PWM value is less than the minimum. Setting fans to BIOS control")
+            logging.debug(
+                "PWM value is less than the minimum. Setting fans to BIOS control"
+            )
             value = 0
 
-
-
-
-        IPMITOOL="/usr/local/bin/ipmitool"
+        IPMITOOL = "/usr/local/bin/ipmitool"
         if value < 40:
-            raw_rear = value/2  # Spin up the rear case fan at half the speed of the front fans
+            raw_rear = (
+                value / 2
+            )  # Spin up the rear case fan at half the speed of the front fans
         else:
             raw_rear = value
 
         if raw_rear < 20:
             raw_rear = "00"  # Set to auto
 
-        CPU='0x00'
-        REAR='0x' + str(raw_rear)
-        FRNT1='0x' + str(value)
-        FRNT2='0x' + str(value)
+        CPU = "0x00"
+        REAR = "0x" + str(raw_rear)
+        FRNT1 = "0x" + str(value)
+        FRNT2 = "0x" + str(value)
 
-        ipmitool_args = "raw 0x3a 0x01 %s 0x00 %s 0x00 %s %s 0x00 0x00" % (CPU, REAR, FRNT1, FRNT2)
+        ipmitool_args = "raw 0x3a 0x01 %s 0x00 %s 0x00 %s %s 0x00 0x00" % (
+            CPU,
+            REAR,
+            FRNT1,
+            FRNT2,
+        )
 
         logging.debug(ipmitool_args)
 
@@ -277,8 +292,9 @@ class FanControl:
         if self.previous_pwm_value != value:
             logging.info("PWM value changed. Updating fan speed")
             try:
-                child = subprocess.Popen(ipmi_cmd, stdout=subprocess.PIPE, \
-                                         stderr=subprocess.PIPE)
+                child = subprocess.Popen(
+                    ipmi_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
             except OSError:
                 print("Executing ipmitool gave an error,")
                 sys.exit(1)
@@ -314,8 +330,9 @@ def log(temperature, chassis, pid):
     PCT = str(chassis.fan_speed)
 
     all_vars = [TMP, PCT, PWM, P, I, D, E]
-    formatstring = "Temp: {:2} | Fan: {:2}% | PWM: {:3} | P={:3} | I={:3} | "\
-                   "D={:3} | Err={:3}|"
+    formatstring = (
+        "Temp: {:2} | Fan: {:2}% | PWM: {:3} | P={:3} | I={:3} | " "D={:3} | Err={:3}|"
+    )
 
     logging.info(formatstring.format(*all_vars))
 
@@ -404,7 +421,7 @@ def main():
 if __name__ == "__main__":
     logging.config.dictConfig(LOG_SETTINGS)
 
-    f = open('.lock', 'w')
+    f = open(".lock", "w")
     try:
         fcntl.lockf(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except IOError as e:
