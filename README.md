@@ -72,9 +72,13 @@ Forked From: https://github.com/louwrentius/storagefancontrol
 
 INSTALL
 --------
-1. Copy the configuration file and the script where you want
+
+The main script is launched from a shell script so that it can detach from the terminal
+
+1. Copy the configuration file, the Python script, and the shell script where you want
 2. Check the config file
-3. Make sure the script is executed on boot.
+3. Modify the shell script to point to correct directory from step 1.
+3. Configure FreeNAS to run the shell script on boot.
 
 TODO
 ----
