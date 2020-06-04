@@ -75,3 +75,7 @@ INSTALL
 1. Copy the configuration file and the script where you want
 2. Check the config file
 3. Make sure the script is executed on boot.
+
+TODO
+----
+Clean up references to MegaCLI.
