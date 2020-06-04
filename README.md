@@ -3,17 +3,30 @@ storagefancontrol
 Fan speed PID controller based on hard drive temperature
 --------------------------------------------------------
 
+This project was forked from a fan control script built for Linux. It has been 
+modified to work on FreeNAS 11 and using an ASRock Rack motherboard (specifically the E3C236D4U. Other models may differ).
+
 This script is meant for storage servers with lots of (spinning) hard drives.
 It regulates the chassis (PWM) fan speed based on the hard drive temperature. 
 
 The script is intended for people who build large storage servers used in an
 environment (at home) where noise matters.
 
-The hard drive temperature is monitored through either SMART or the MegaCLI 
-tool used by LSI-based HBA controllers. 
+The hard drive temperature is monitored through SMART.
 
-Fan speed is governed by PWM fan controls and sensors as supported by
-Linux under /sys/class/hwmon, such as /sys/class/hwmon/hwmon2/device/pwm2.
+Fan speed is governed by PWM fan controls and sensors as supported the ipmitool.
+
+The ASRock Rack motherboard fan speed is controlled by the following command
+
+```
+ipmitool raw 0x3a 0x01 0x64 0x00 0x64 0x00 0x64 0x64 0x00 0x00
+					CPU		REAR	  FRNT1 FRNT2
+
+0x00 is Auto
+0x01 is Min
+0x64 is Max
+```
+
 
 This script has been updated to handle multiple PWM devices.
 
@@ -29,7 +42,8 @@ of each drive. The temperature of the hottest drive is used to determine if the
 chassis fans need to run faster, slower or if they should stay at the same speed.
 
 the PID controller makes sure that an optimal fan speed is found to keep the
-system at a maximum of - in my case - 40C.
+system at a maximum of - in my case - 40C. The target temp is 
+configurable.
 
 The script logs internal variables to syslog by default.
 
@@ -49,17 +63,15 @@ This will give you output on the console:
     export DEBUG=True 
 
 The disk temperature is read through 'smartctl' (part of smartmontools).
-Temperature can also be read through LSI-based HBAs managed by MegaCLI.
-You must edit the __main__ function to switch between these two options.
+
 
 The script performs a poll every 30 seconds by default. 
 
-I'm using this script myself to govern the fan speed of my [storage server][NAS].
 
-NAS: http://louwrentius.com/71-tib-diy-nas-based-on-zfs-on-linux.html
+Forked From: https://github.com/louwrentius/storagefancontrol
 
 INSTALL
 --------
-1. Copy the configuration file in /etc/
-2. Copy the executable in /usr/sbin or anywhere you want
+1. Copy the configuration file and the script where you want
+2. Check the config file
 3. Make sure the script is executed on boot.
