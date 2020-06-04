@@ -20,7 +20,7 @@ The ASRock Rack motherboard fan speed is controlled by the following command
 
 ```
 ipmitool raw 0x3a 0x01 0x64 0x00 0x64 0x00 0x64 0x64 0x00 0x00
-					CPU		REAR	  FRNT1 FRNT2
+		       CPU	 REAR	   FRNT1 FRNT2
 
 0x00 is Auto
 0x01 is Min
