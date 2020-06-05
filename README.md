@@ -58,9 +58,6 @@ The script logs internal variables to a log file by default.
     Temp: 40 | FAN: 49% | PWM: 124 | P=0   | I=49  | D=0   | Err=0  |
     Temp: 40 | FAN: 49% | PWM: 124 | P=0   | I=49  | D=0   | Err=0  |
 
-This will give you output on the console:
-
-    export DEBUG=True 
 
 The disk temperature is read through 'smartctl' (part of smartmontools).
 
