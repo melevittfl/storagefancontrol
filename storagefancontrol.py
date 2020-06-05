@@ -1,8 +1,8 @@
 #!/usr/local/bin/python
 """
 This program controls the chassis fan speed through PWM based on the temperature
-of the hottest hard drive in the chassis. It uses the IBM M1015 or LSI tool
-'MegaCli' for reading hard drive temperatures.
+of the hottest hard drive in the chassis. It uses the SMART utility
+for reading hard drive temperatures.
 """
 import errno
 import sys
@@ -318,7 +318,7 @@ class FanControl:
 
 def log(temperature, chassis, pid):
     """
-    Logging to syslog and terminal (export DEBUG=True).
+    Logging to log file.
     """
     P = str(pid.P_value)
     I = str(pid.I_value)
@@ -365,17 +365,11 @@ def get_pid_settings(config):
 def get_temp_source(config):
     """ Configure temperature source."""
 
-    mode = config.get("General", "mode")
-
-    if mode == "smart":
-        temp_source = Smart()
-        temp_source.device_filter = config.get("Smart", "device_filter")
-        temp_source.boot_device = config.get("Smart", "boot_device")
-        temp_source.smart_workers = config.getint("Smart", "smart_workers")
-        return temp_source
-
-    print("Mode not set, check config.")
-    sys.exit(1)
+    temp_source = Smart()
+    temp_source.device_filter = config.get("Smart", "device_filter")
+    temp_source.boot_device = config.get("Smart", "boot_device")
+    temp_source.smart_workers = config.getint("Smart", "smart_workers")
+    return temp_source
 
 
 def get_chassis_settings(config):

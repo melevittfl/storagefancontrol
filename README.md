@@ -45,7 +45,7 @@ the PID controller makes sure that an optimal fan speed is found to keep the
 system at a maximum of - in my case - 40C. The target temp is 
 configurable.
 
-The script logs internal variables to syslog by default.
+The script logs internal variables to a log file by default.
 
     Temp: 40 | FAN: 51% | PWM: 130 | P=0   | I=51  | D=0   | Err=0  |
     Temp: 40 | FAN: 51% | PWM: 130 | P=0   | I=51  | D=0   | Err=0  |
