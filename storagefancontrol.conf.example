@@ -46,7 +46,7 @@ pwm_safety = 32
 
 # Rear fan runs at this fraction of the front fan PWM, floored at pwm_min.
 # 1.0 = matches front fans exactly. 0.5 = half speed. Never hands off to BIOS.
-rear_fan_ratio = 0.6
+rear_fan_ratio = 0.9
 
 # CPU temperature thresholds for rear fan control (read via sysctl dev.cpu).
 # Below cpu_temp_min the CPU contributes nothing to rear fan speed.

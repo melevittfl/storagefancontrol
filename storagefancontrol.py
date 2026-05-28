@@ -224,7 +224,7 @@ class FanControl:
         self.pwm_max = 64
         self.pwm_min = 1
         self.pwm_safety = 32
-        self.rear_fan_ratio = 0.6
+        self.rear_fan_ratio = 0.9
         self.cpu_temp = 0.0
         self.cpu_temp_min = 40
         self.cpu_temp_max = 80
