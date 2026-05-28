@@ -214,24 +214,14 @@ class Smart:
 
 class FanControl:
     """
-    The chassis object provides you with the option:
-    1. Get the temperature of the hottest hard drive
-    2. Get the current fan speed
-    3. Set the fan speed
+    Controls chassis fan speed via ipmitool PWM commands.
     """
 
     def __init__(self):
-        """
-        Generic init method.
-        """
-        self.polling_interval = 30
         self.pwm_max = 64
         self.pwm_min = 1
         self.pwm_safety = 32
         self.fan_speed = 50
-        self.fan_control_enable = ""
-        self.fan_control_device = ""
-        self.debug = False
         self.pwm_value = 0
         self.previous_pwm_value = 0
 
@@ -344,8 +334,7 @@ def log(temperature, chassis, pid):
 
 
 def read_config():
-    """ Main"""
-    config_file = "./storagefancontrol.conf"  # FIXME: Move to real spot
+    config_file = "./storagefancontrol.conf"
     conf = configparser.ConfigParser()
     conf.read(config_file)
     return conf
@@ -390,12 +379,6 @@ def get_chassis_settings(config):
 
 
 def main():
-    """
-    Main function. Contains variables that can be tweaked to your needs.
-    Please look at the class object to see which attributes you can set.
-    The pid values are tuned to my particular system and may require
-    ajustment for your system(s).
-    """
     config = read_config()
     polling_interval = config.getfloat("General", "polling_interval")
 

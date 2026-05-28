@@ -93,6 +93,3 @@ Note: `storagefancontrol.conf` is not tracked by git so your local settings
 will not be overwritten when pulling updates. The example file is kept
 up to date with all available options.
 
-TODO
-----
-Clean up references to MegaCLI.
