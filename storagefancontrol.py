@@ -4,8 +4,10 @@ This program controls the chassis fan speed through PWM based on the temperature
 of the hottest hard drive in the chassis. It uses the SMART utility
 for reading hard drive temperatures.
 """
+import atexit
 import errno
 import os
+import signal
 import sys
 import subprocess
 import re
@@ -383,6 +385,9 @@ def main():
     polling_interval = config.getfloat("General", "polling_interval")
 
     chassis = get_chassis_settings(config)
+    atexit.register(chassis.set_pwm, chassis.pwm_safety)
+    signal.signal(signal.SIGTERM, lambda sig, frame: sys.exit(0))
+
     pid = get_pid_settings(config)
     temp_source = get_temp_source(config)
 
@@ -404,8 +409,7 @@ def main():
             time.sleep(polling_interval)
 
     except (KeyboardInterrupt, SystemExit):
-        chassis.set_pwm(chassis.pwm_safety)
-        sys.exit(1)
+        pass
 
 
 if __name__ == "__main__":
