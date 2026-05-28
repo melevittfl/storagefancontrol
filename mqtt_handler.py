@@ -51,11 +51,25 @@ def publish_discovery(client, config, devices):
         }
         client.publish(config_topic, json.dumps(payload), retain=True)
 
+    config_topic = f"homeassistant/sensor/{device_id}_fan_speed/config"
+    payload = {
+        "name": "Fan Speed",
+        "unique_id": f"{device_id}_fan_speed",
+        "state_topic": state_topic,
+        "value_template": "{{ value_json.fan_speed }}",
+        "unit_of_measurement": "%",
+        "state_class": "measurement",
+        "device": device_info,
+    }
+    client.publish(config_topic, json.dumps(payload), retain=True)
+
     logging.info("Published MQTT discovery for %d devices", len(devices))
 
 
-def publish_readings(client, config, readings):
-    """Publish per-device temperature readings dict to MQTT state topic."""
+def publish_readings(client, config, readings, fan_speed):
+    """Publish per-device temperatures and fan speed to MQTT state topic."""
     device_id = config.get("MQTT", "device_id")
     state_topic = f"homeassistant/sensor/{device_id}/state"
-    client.publish(state_topic, json.dumps(readings))
+    payload = dict(readings)
+    payload["fan_speed"] = fan_speed
+    client.publish(state_topic, json.dumps(payload))

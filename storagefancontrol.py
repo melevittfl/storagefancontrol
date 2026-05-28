@@ -400,7 +400,7 @@ def main():
             chassis.set_fan_speed(fan_speed)
             log(highest_temperature, chassis, pid)
             if mqtt_client:
-                publish_readings(mqtt_client, config, temp_source.device_temperatures)
+                publish_readings(mqtt_client, config, temp_source.device_temperatures, chassis.fan_speed)
             time.sleep(polling_interval)
 
     except (KeyboardInterrupt, SystemExit):
