@@ -224,6 +224,7 @@ class FanControl:
         self.pwm_max = 64
         self.pwm_min = 1
         self.pwm_safety = 32
+        self.rear_fan_ratio = 0.6
         self.fan_speed = 50
         self.pwm_value = 0
         self.previous_pwm_value = 0
@@ -260,15 +261,7 @@ class FanControl:
             value = 0
 
         IPMITOOL = "/usr/local/bin/ipmitool"
-        if value < 40:
-            raw_rear = (
-                value / 2
-            )  # Spin up the rear case fan at half the speed of the front fans
-        else:
-            raw_rear = value
-
-        if raw_rear < 20:
-            raw_rear = "00"  # Set to auto
+        raw_rear = max(self.pwm_min, int(value * self.rear_fan_ratio))
 
         CPU = "0x00"
         REAR = "0x" + str(raw_rear)
@@ -350,6 +343,7 @@ def reload_config_values(config, chassis, pid, temp_source):
     chassis.pwm_min = config.getint("Chassis", "pwm_min")
     chassis.pwm_max = config.getint("Chassis", "pwm_max")
     chassis.pwm_safety = config.getint("Chassis", "pwm_safety")
+    chassis.rear_fan_ratio = config.getfloat("Chassis", "rear_fan_ratio")
 
     pid.Kp = config.getint("Pid", "P")
     pid.Ki = config.getint("Pid", "I")
@@ -408,6 +402,7 @@ def get_chassis_settings(config):
     chassis.pwm_min = config.getint("Chassis", "pwm_min")
     chassis.pwm_max = config.getint("Chassis", "pwm_max")
     chassis.pwm_safety = config.getint("Chassis", "pwm_safety")
+    chassis.rear_fan_ratio = config.getfloat("Chassis", "rear_fan_ratio")
     return chassis
 
 

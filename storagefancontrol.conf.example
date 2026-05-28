@@ -44,6 +44,10 @@ pwm_max = 64
 # crashes.
 pwm_safety = 32
 
+# Rear fan runs at this fraction of the front fan PWM, floored at pwm_min.
+# 1.0 = matches front fans exactly. 0.5 = half speed. Never hands off to BIOS.
+rear_fan_ratio = 0.6
+
 [Smart]
 # We only look at the temperature of hard drives we care about.
 device_filter = ada
