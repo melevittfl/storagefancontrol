@@ -335,6 +335,36 @@ def log(temperature, chassis, pid):
     logging.info(formatstring.format(*all_vars))
 
 
+_reload_config = False
+
+
+def _sighup_handler(sig, frame):
+    global _reload_config
+    _reload_config = True
+    logging.info("SIGHUP received: reloading config on next cycle")
+
+
+def reload_config_values(config, chassis, pid, temp_source):
+    """Update all tunable settings in place. PID integrator state is preserved."""
+    chassis.pwm_min = config.getint("Chassis", "pwm_min")
+    chassis.pwm_max = config.getint("Chassis", "pwm_max")
+    chassis.pwm_safety = config.getint("Chassis", "pwm_safety")
+
+    pid.Kp = config.getint("Pid", "P")
+    pid.Ki = config.getint("Pid", "I")
+    pid.Kd = config.getint("Pid", "D")
+    pid.Integrator_max = config.getint("Pid", "I_max")
+    pid.Integrator_min = config.getint("Pid", "I_min")
+    pid.set_target_value(config.getint("General", "target_temperature"))
+
+    temp_source.device_filter = config.get("Smart", "device_filter")
+    temp_source.boot_device = config.get("Smart", "boot_device")
+    temp_source.smart_workers = config.getint("Smart", "smart_workers")
+    temp_source.get_block_devices()
+
+    logging.info("Config reloaded. MQTT changes require a restart.")
+
+
 def read_config():
     config_file = "./storagefancontrol.conf"
     conf = configparser.ConfigParser()
@@ -392,6 +422,7 @@ def main():
 
     atexit.register(set_safety_speed)
     signal.signal(signal.SIGTERM, lambda sig, frame: sys.exit(0))
+    signal.signal(signal.SIGHUP, _sighup_handler)
 
     pid = get_pid_settings(config)
     temp_source = get_temp_source(config)
@@ -405,6 +436,13 @@ def main():
 
     try:
         while True:
+            global _reload_config
+            if _reload_config:
+                _reload_config = False
+                config = read_config()
+                polling_interval = config.getfloat("General", "polling_interval")
+                reload_config_values(config, chassis, pid, temp_source)
+
             highest_temperature = temp_source.get_highest_temperature()
             fan_speed = pid.update(highest_temperature)
             chassis.set_fan_speed(fan_speed)
