@@ -203,6 +203,7 @@ class Smart:
         pool = mp.Pool(processes=int(self.smart_workers))
         results = pool.map(self.get_temperature, devices)
         pool.close()
+        pool.join()
 
         self.device_temperatures = dict(zip(devices, results))
         for device, temperature in self.device_temperatures.items():
