@@ -225,6 +225,9 @@ class FanControl:
         self.pwm_min = 1
         self.pwm_safety = 32
         self.rear_fan_ratio = 0.6
+        self.cpu_temp = 0.0
+        self.cpu_temp_min = 40
+        self.cpu_temp_max = 80
         self.fan_speed = 50
         self.pwm_value = 0
         self.previous_pwm_value = 0
@@ -261,7 +264,13 @@ class FanControl:
             value = 0
 
         IPMITOOL = "/usr/local/bin/ipmitool"
-        raw_rear = max(self.pwm_min, int(value * self.rear_fan_ratio))
+        drive_rear = max(self.pwm_min, int(value * self.rear_fan_ratio))
+        if self.cpu_temp > self.cpu_temp_min:
+            cpu_fraction = min(1.0, (self.cpu_temp - self.cpu_temp_min) / (self.cpu_temp_max - self.cpu_temp_min))
+            cpu_rear = max(self.pwm_min, int(cpu_fraction * self.pwm_max))
+        else:
+            cpu_rear = self.pwm_min
+        raw_rear = max(drive_rear, cpu_rear)
 
         CPU = "0x00"
         REAR = "0x" + str(raw_rear)
@@ -344,6 +353,8 @@ def reload_config_values(config, chassis, pid, temp_source):
     chassis.pwm_max = config.getint("Chassis", "pwm_max")
     chassis.pwm_safety = config.getint("Chassis", "pwm_safety")
     chassis.rear_fan_ratio = config.getfloat("Chassis", "rear_fan_ratio")
+    chassis.cpu_temp_min = config.getint("Chassis", "cpu_temp_min")
+    chassis.cpu_temp_max = config.getint("Chassis", "cpu_temp_max")
 
     pid.Kp = config.getint("Pid", "P")
     pid.Ki = config.getint("Pid", "I")
@@ -358,6 +369,26 @@ def reload_config_values(config, chassis, pid, temp_source):
     temp_source.get_block_devices()
 
     logging.info("Config reloaded. MQTT changes require a restart.")
+
+
+def get_cpu_temperature():
+    """Return the highest CPU core temperature via sysctl."""
+    try:
+        child = subprocess.Popen(
+            ["sysctl", "-a", "dev.cpu"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stdout, _ = child.communicate()
+        temps = []
+        for line in stdout.decode("utf-8").splitlines():
+            if "temperature" in line:
+                temp_str = line.split(":")[1].strip().rstrip("C")
+                temps.append(float(temp_str))
+        return max(temps) if temps else 0.0
+    except Exception as e:
+        logging.error("Failed to read CPU temperature: %s", e)
+        return 0.0
 
 
 def read_config():
@@ -403,6 +434,8 @@ def get_chassis_settings(config):
     chassis.pwm_max = config.getint("Chassis", "pwm_max")
     chassis.pwm_safety = config.getint("Chassis", "pwm_safety")
     chassis.rear_fan_ratio = config.getfloat("Chassis", "rear_fan_ratio")
+    chassis.cpu_temp_min = config.getint("Chassis", "cpu_temp_min")
+    chassis.cpu_temp_max = config.getint("Chassis", "cpu_temp_max")
     return chassis
 
 
@@ -440,11 +473,14 @@ def main():
                 reload_config_values(config, chassis, pid, temp_source)
 
             highest_temperature = temp_source.get_highest_temperature()
+            cpu_temp = get_cpu_temperature()
+            logging.debug("CPU temp: %.1f°C", cpu_temp)
+            chassis.cpu_temp = cpu_temp
             fan_speed = pid.update(highest_temperature)
             chassis.set_fan_speed(fan_speed)
             log(highest_temperature, chassis, pid)
             if mqtt_client:
-                publish_readings(mqtt_client, config, temp_source.device_temperatures, chassis.fan_speed)
+                publish_readings(mqtt_client, config, temp_source.device_temperatures, chassis.fan_speed, cpu_temp)
             time.sleep(polling_interval)
 
     except (KeyboardInterrupt, SystemExit):

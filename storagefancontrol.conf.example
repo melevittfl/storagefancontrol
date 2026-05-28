@@ -48,6 +48,13 @@ pwm_safety = 32
 # 1.0 = matches front fans exactly. 0.5 = half speed. Never hands off to BIOS.
 rear_fan_ratio = 0.6
 
+# CPU temperature thresholds for rear fan control (read via sysctl dev.cpu).
+# Below cpu_temp_min the CPU contributes nothing to rear fan speed.
+# At cpu_temp_max the CPU drives the rear fan to pwm_max.
+# Rear fan always takes the max of the drive-based and CPU-based calculations.
+cpu_temp_min = 40
+cpu_temp_max = 80
+
 [Smart]
 # We only look at the temperature of hard drives we care about.
 device_filter = ada
