@@ -10,7 +10,7 @@ target_temperature = 39
 # They seem sane default values but may require tweaking.
 
 # Proportional: how big the change in percent is when an ajustment is made.
-P = 2
+P = 5
 
 # Integral: how much the change will be amplified based on the error.
 # where 'error' is the distance from the target temperature.
