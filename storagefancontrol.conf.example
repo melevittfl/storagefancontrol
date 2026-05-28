@@ -19,7 +19,7 @@ I = 1
 # Derivative: the fan speed will be ajusted by this percent direct after a
 # change in temperature, multiplied by the 'error' or distance from the target
 # temperature. The value will be zero if there is no change.
-D = 5
+D = 1
 
 # When the temperature changes, the initial change will be amplified by D.
 # This amplification can be further increased based on the D_aplification

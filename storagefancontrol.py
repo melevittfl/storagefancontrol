@@ -64,7 +64,7 @@ class PID:
         self.error = current_value - int(self.set_point)
 
         self.P_value = self.Kp * self.error
-        self.D_value = self.Kd * (self.error + self.Derivator)
+        self.D_value = self.Kd * (self.error - self.Derivator)
         self.Derivator = self.error
 
         self.Integrator = self.Integrator + self.error
