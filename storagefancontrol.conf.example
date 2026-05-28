@@ -3,7 +3,7 @@
 polling_interval = 30
 
 # Temperature in Celcius.
-target_temperature = 36
+target_temperature = 37
 
 [Pid]
 # The values in this section are tuned for the author's system.
