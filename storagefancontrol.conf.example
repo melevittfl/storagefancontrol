@@ -3,14 +3,14 @@
 polling_interval = 30
 
 # Temperature in Celcius.
-target_temperature = 39
+target_temperature = 36
 
 [Pid]
 # The values in this section are tuned for the author's system.
 # They seem sane default values but may require tweaking.
 
 # Proportional: how big the change in percent is when an ajustment is made.
-P = 5
+P = 10
 
 # Integral: how much the change will be amplified based on the error.
 # where 'error' is the distance from the target temperature.
