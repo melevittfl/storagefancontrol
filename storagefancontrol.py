@@ -5,6 +5,7 @@ of the hottest hard drive in the chassis. It uses the SMART utility
 for reading hard drive temperatures.
 """
 import errno
+import os
 import sys
 import subprocess
 import re
@@ -18,6 +19,7 @@ import fcntl
 import logging
 import logging.config
 from log_config import *
+from mqtt_handler import setup_mqtt, publish_discovery, publish_readings
 
 
 def _reduce_method(meth):
@@ -100,7 +102,7 @@ class Smart:
         self.device_filter = "sd"
         self.boot_device = "ada0"
         self.highest_temperature = 0
-        self.get_block_devices()
+        self.device_temperatures = {}
         self.smart_workers = 24
 
     def get_block_devices(self):
@@ -125,6 +127,7 @@ class Smart:
             devices.add(str(line.split()[2], "utf-8"))
 
         devices.discard(self.boot_device)
+        devices = {d for d in devices if d.startswith(self.device_filter)}
 
         self.block_devices = devices
 
@@ -194,11 +197,14 @@ class Smart:
         to collect SMART data in parallel from multiple devices.
         """
         highest_temperature = 0
+        devices = list(self.block_devices)
         pool = mp.Pool(processes=int(self.smart_workers))
-        results = pool.map(self.get_temperature, self.block_devices)
+        results = pool.map(self.get_temperature, devices)
         pool.close()
 
-        for temperature in results:
+        self.device_temperatures = dict(zip(devices, results))
+        for device, temperature in self.device_temperatures.items():
+            logging.debug("%s: %s°C", device, temperature)
             if temperature > highest_temperature:
                 highest_temperature = temperature
         self.highest_temperature = highest_temperature
@@ -369,6 +375,7 @@ def get_temp_source(config):
     temp_source.device_filter = config.get("Smart", "device_filter")
     temp_source.boot_device = config.get("Smart", "boot_device")
     temp_source.smart_workers = config.getint("Smart", "smart_workers")
+    temp_source.get_block_devices()
     return temp_source
 
 
@@ -396,6 +403,10 @@ def main():
     pid = get_pid_settings(config)
     temp_source = get_temp_source(config)
 
+    mqtt_client = setup_mqtt(config)
+    if mqtt_client:
+        publish_discovery(mqtt_client, config, temp_source.block_devices)
+
     # Set the fan to the chassis min on startup.
     chassis.set_pwm(chassis.pwm_min)
 
@@ -405,6 +416,8 @@ def main():
             fan_speed = pid.update(highest_temperature)
             chassis.set_fan_speed(fan_speed)
             log(highest_temperature, chassis, pid)
+            if mqtt_client:
+                publish_readings(mqtt_client, config, temp_source.device_temperatures)
             time.sleep(polling_interval)
 
     except (KeyboardInterrupt, SystemExit):
@@ -422,5 +435,8 @@ if __name__ == "__main__":
         if e.errno == errno.EAGAIN:
             logging.error("Another instance already running")
             sys.exit(-1)
+
+    with open('/var/run/storagefancontrol.pid', 'w') as f:
+        f.write(str(os.getpid()))
 
     main()

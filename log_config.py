@@ -1,13 +1,13 @@
 LOG_SETTINGS = {
     'version': 1,
     'root': {
-        'level': 'INFO',
+        'level': 'DEBUG',
         'handlers': ['file'],
     },
     'handlers': {
         'file': {
             'class': 'logging.handlers.RotatingFileHandler',
-            'level': 'INFO',
+            'level': 'DEBUG',
             'formatter': 'normal',
             'filename': 'fan_control.log',
             'mode': 'a',
