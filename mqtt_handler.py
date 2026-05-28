@@ -63,7 +63,7 @@ def publish_discovery(client, config, devices):
     }
     client.publish(config_topic, json.dumps(payload), retain=True)
 
-    logging.info("Published MQTT discovery for %d devices", len(devices))
+    logging.info("Published MQTT discovery for %d drive sensors and fan speed", len(devices))
 
 
 def publish_readings(client, config, readings, fan_speed):
