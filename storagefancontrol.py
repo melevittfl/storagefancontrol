@@ -385,7 +385,12 @@ def main():
     polling_interval = config.getfloat("General", "polling_interval")
 
     chassis = get_chassis_settings(config)
-    atexit.register(chassis.set_pwm, chassis.pwm_safety)
+
+    def set_safety_speed():
+        logging.warning("Exiting: setting fans to safety speed (PWM %s)", chassis.pwm_safety)
+        chassis.set_pwm(chassis.pwm_safety)
+
+    atexit.register(set_safety_speed)
     signal.signal(signal.SIGTERM, lambda sig, frame: sys.exit(0))
 
     pid = get_pid_settings(config)
