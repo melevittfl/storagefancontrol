@@ -55,6 +55,9 @@ class PID:
 
         self.set_point = 0.0
         self.error = 0.0
+        self.P_value = 0.0
+        self.I_value = self.Integrator * I
+        self.D_value = 0.0
         self.output_min = 0
         self.output_max = 100
 
