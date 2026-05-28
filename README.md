@@ -72,10 +72,26 @@ INSTALL
 
 The main script is launched from a shell script so that it can detach from the terminal
 
-1. Copy the configuration file, the Python script, and the shell script where you want
-2. Check the config file
-3. Modify the shell script to point to correct directory from step 1.
-3. Configure FreeNAS to run the shell script on boot.
+1. Clone the repository or copy the files to your desired directory.
+2. Copy the example config and edit it for your system:
+   ```
+   cp storagefancontrol.conf.example storagefancontrol.conf
+   ```
+3. Edit `storagefancontrol.conf`:
+   - Set `device_filter` to match your drive prefix (e.g. `ada` for SATA on FreeBSD/TrueNAS)
+   - Set `boot_device` to exclude your boot drive (e.g. `ada0`)
+   - Adjust PID and PWM values for your hardware
+   - Optionally enable MQTT under `[MQTT]` for Home Assistant integration
+4. Install dependencies:
+   ```
+   pip install paho-mqtt
+   ```
+5. Modify the shell script to point to the directory from step 1.
+6. Configure TrueNAS/FreeNAS to run the shell script on boot.
+
+Note: `storagefancontrol.conf` is not tracked by git so your local settings
+will not be overwritten when pulling updates. The example file is kept
+up to date with all available options.
 
 TODO
 ----
