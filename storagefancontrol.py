@@ -55,6 +55,8 @@ class PID:
 
         self.set_point = 0.0
         self.error = 0.0
+        self.output_min = 0
+        self.output_max = 100
 
     def update(self, current_value):
         """
@@ -67,7 +69,11 @@ class PID:
         self.D_value = self.Kd * (self.error - self.Derivator)
         self.Derivator = self.error
 
-        self.Integrator = self.Integrator + self.error
+        output = self.P_value + self.I_value + self.D_value
+        saturated_high = output >= self.output_max and self.error > 0
+        saturated_low = output <= self.output_min and self.error < 0
+        if not saturated_high and not saturated_low:
+            self.Integrator = self.Integrator + self.error
 
         if self.Integrator > self.Integrator_max:
             self.Integrator = self.Integrator_max
@@ -78,7 +84,7 @@ class PID:
 
         PID = self.P_value + self.I_value + self.D_value
 
-        return PID
+        return max(self.output_min, min(self.output_max, PID))
 
     def set_target_value(self, set_point):
         """
