@@ -13,8 +13,6 @@ import subprocess
 import re
 import time
 import multiprocessing as mp
-import copyreg
-import types
 import configparser
 
 import fcntl
@@ -23,14 +21,6 @@ import logging.config
 from log_config import *
 from mqtt_handler import setup_mqtt, publish_discovery, publish_readings
 from fan_curve import FanCurve
-
-
-def _reduce_method(meth):
-    """
-    This is a hack to work around the fact that multiprocessing
-    can't operate on class methods by default.
-    """
-    return (getattr, (meth.__self__, meth.__func__.__name__))
 
 
 class PID:
@@ -110,9 +100,6 @@ class PID:
         D = str(self.D_value)
         E = str(self.error)
         return "P={:3} | I={:3} | D={:3} | Err={:3}|".format(P, I, D, E)
-
-
-copyreg.pickle(types.MethodType, _reduce_method)
 
 
 class Smart:
