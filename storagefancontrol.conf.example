@@ -2,8 +2,17 @@
 # Polling interval in seconds.
 polling_interval = 30
 
-# Temperature in Celcius.
+# Temperature in Celcius. Used by the PID controller only.
 target_temperature = 37
+
+# Fan speed controller: 'pid' or 'curve'.
+# pid:   Feedback controller that targets `target_temperature`.
+#        Adapts to ambient conditions but can be noisy when tuned
+#        to keep temperatures well below a hard ceiling.
+# curve: Piecewise-linear map from drive temperature to fan speed.
+#        Predictable and asymmetric — quiet when cool, aggressive
+#        only as drives approach the upper limit. See [FanCurve].
+controller = pid
 
 [Pid]
 # The values in this section are tuned for the author's system.
@@ -54,6 +63,16 @@ rear_fan_ratio = 0.9
 # Rear fan always takes the max of the drive-based and CPU-based calculations.
 cpu_temp_min = 40
 cpu_temp_max = 80
+
+[FanCurve]
+# Comma-separated list of temperature:fan_percent points.
+# Linear interpolation between adjacent points. Below the lowest
+# point and above the highest, fan speed is clamped to that
+# endpoint's value.
+#
+# Example: quiet below 37C, ramps noticeably between 37-38C,
+# very aggressively between 38-39C, and pinned at maximum from 39C.
+curve = 34:20, 37:35, 38:60, 39:100
 
 [Smart]
 # We only look at the temperature of hard drives we care about.

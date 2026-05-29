@@ -22,6 +22,7 @@ import logging
 import logging.config
 from log_config import *
 from mqtt_handler import setup_mqtt, publish_discovery, publish_readings
+from fan_curve import FanCurve
 
 
 def _reduce_method(meth):
@@ -94,6 +95,21 @@ class PID:
         Initilize the setpoint of PID
         """
         self.set_point = set_point
+
+    def reload(self, config):
+        self.Kp = config.getint("Pid", "P")
+        self.Ki = config.getint("Pid", "I")
+        self.Kd = config.getint("Pid", "D")
+        self.Integrator_max = config.getint("Pid", "I_max")
+        self.Integrator_min = config.getint("Pid", "I_min")
+        self.set_target_value(config.getint("General", "target_temperature"))
+
+    def log_state(self):
+        P = str(self.P_value)
+        I = str(self.I_value)
+        D = str(self.D_value)
+        E = str(self.error)
+        return "P={:3} | I={:3} | D={:3} | Err={:3}|".format(P, I, D, E)
 
 
 copyreg.pickle(types.MethodType, _reduce_method)
@@ -326,25 +342,18 @@ class FanControl:
         self.set_pwm(int(pwm))
 
 
-def log(temperature, chassis, pid):
+def log(temperature, chassis, controller):
     """
     Logging to log file.
     """
-    P = str(pid.P_value)
-    I = str(pid.I_value)
-    D = str(pid.D_value)
-    E = str(pid.error)
-
     TMP = str(temperature)
     PWM = str(chassis.get_pwm())
     PCT = str(chassis.fan_speed)
+    state = controller.log_state()
 
-    all_vars = [TMP, PCT, PWM, P, I, D, E]
-    formatstring = (
-        "Temp: {:2} | Fan: {:2}% | PWM: {:3} | P={:3} | I={:3} | " "D={:3} | Err={:3}|"
+    logging.info(
+        "Temp: {:2} | Fan: {:2}% | PWM: {:3} | {}".format(TMP, PCT, PWM, state)
     )
-
-    logging.info(formatstring.format(*all_vars))
 
 
 _reload_config = False
@@ -356,8 +365,8 @@ def _sighup_handler(sig, frame):
     logging.info("SIGHUP received: reloading config on next cycle")
 
 
-def reload_config_values(config, chassis, pid, temp_source):
-    """Update all tunable settings in place. PID integrator state is preserved."""
+def reload_config_values(config, chassis, controller, temp_source):
+    """Update all tunable settings in place. Controller state is preserved."""
     chassis.pwm_min = config.getint("Chassis", "pwm_min")
     chassis.pwm_max = config.getint("Chassis", "pwm_max")
     chassis.pwm_safety = config.getint("Chassis", "pwm_safety")
@@ -365,19 +374,14 @@ def reload_config_values(config, chassis, pid, temp_source):
     chassis.cpu_temp_min = config.getint("Chassis", "cpu_temp_min")
     chassis.cpu_temp_max = config.getint("Chassis", "cpu_temp_max")
 
-    pid.Kp = config.getint("Pid", "P")
-    pid.Ki = config.getint("Pid", "I")
-    pid.Kd = config.getint("Pid", "D")
-    pid.Integrator_max = config.getint("Pid", "I_max")
-    pid.Integrator_min = config.getint("Pid", "I_min")
-    pid.set_target_value(config.getint("General", "target_temperature"))
+    controller.reload(config)
 
     temp_source.device_filter = config.get("Smart", "device_filter")
     temp_source.boot_device = config.get("Smart", "boot_device")
     temp_source.smart_workers = config.getint("Smart", "smart_workers")
     temp_source.get_block_devices()
 
-    logging.info("Config reloaded. MQTT changes require a restart.")
+    logging.info("Config reloaded. Controller mode and MQTT changes require a restart.")
 
 
 def get_cpu_temperature():
@@ -424,6 +428,17 @@ def get_pid_settings(config):
     return pid
 
 
+def get_controller(config):
+    """Return a PID or FanCurve controller based on the configured mode."""
+    mode = config.get("General", "controller", fallback="pid").strip().lower()
+    if mode == "curve":
+        points = FanCurve._parse_curve(config.get("FanCurve", "curve"))
+        logging.info("Using fan curve controller: %s", points)
+        return FanCurve(points)
+    logging.info("Using PID controller")
+    return get_pid_settings(config)
+
+
 def get_temp_source(config):
     """ Configure temperature source."""
 
@@ -462,7 +477,7 @@ def main():
     signal.signal(signal.SIGTERM, lambda sig, frame: sys.exit(0))
     signal.signal(signal.SIGHUP, _sighup_handler)
 
-    pid = get_pid_settings(config)
+    controller = get_controller(config)
     temp_source = get_temp_source(config)
 
     mqtt_client = setup_mqtt(config)
@@ -479,15 +494,15 @@ def main():
                 _reload_config = False
                 config = read_config()
                 polling_interval = config.getfloat("General", "polling_interval")
-                reload_config_values(config, chassis, pid, temp_source)
+                reload_config_values(config, chassis, controller, temp_source)
 
             highest_temperature = temp_source.get_highest_temperature()
             cpu_temp = get_cpu_temperature()
             logging.debug("CPU temp: %.1f°C", cpu_temp)
             chassis.cpu_temp = cpu_temp
-            fan_speed = pid.update(highest_temperature)
+            fan_speed = controller.update(highest_temperature)
             chassis.set_fan_speed(fan_speed)
-            log(highest_temperature, chassis, pid)
+            log(highest_temperature, chassis, controller)
             if mqtt_client:
                 publish_readings(mqtt_client, config, temp_source.device_temperatures, chassis.fan_speed, cpu_temp)
             time.sleep(polling_interval)
