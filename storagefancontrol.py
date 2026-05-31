@@ -276,18 +276,21 @@ class FanControl:
             value = 0
 
         IPMITOOL = "/usr/local/bin/ipmitool"
-        drive_rear = max(self.pwm_min, int(value * self.rear_fan_ratio))
-        if self.cpu_temp > self.cpu_temp_min:
-            cpu_fraction = min(1.0, (self.cpu_temp - self.cpu_temp_min) / (self.cpu_temp_max - self.cpu_temp_min))
-            cpu_rear = max(self.pwm_min, int(cpu_fraction * self.pwm_max))
+        if value == 0:
+            raw_rear = 0
         else:
-            cpu_rear = self.pwm_min
-        raw_rear = max(drive_rear, cpu_rear)
+            drive_rear = max(self.pwm_min, int(value * self.rear_fan_ratio))
+            if self.cpu_temp > self.cpu_temp_min:
+                cpu_fraction = min(1.0, (self.cpu_temp - self.cpu_temp_min) / (self.cpu_temp_max - self.cpu_temp_min))
+                cpu_rear = max(self.pwm_min, int(cpu_fraction * self.pwm_max))
+            else:
+                cpu_rear = self.pwm_min
+            raw_rear = max(drive_rear, cpu_rear)
 
         CPU = "0x00"
-        REAR = "0x" + str(raw_rear)
-        FRNT1 = "0x" + str(value)
-        FRNT2 = "0x" + str(value)
+        REAR = "0x{:02d}".format(raw_rear)
+        FRNT1 = "0x{:02d}".format(value)
+        FRNT2 = "0x{:02d}".format(value)
 
         ipmitool_args = "raw 0x3a 0x01 %s 0x00 %s 0x00 %s %s 0x00 0x00" % (
             CPU,
