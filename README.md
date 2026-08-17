@@ -305,7 +305,7 @@ root, so this only affects manual starts.
 cat storagefancontrol.pid          # should match a live process
 ps -p "$(cat storagefancontrol.pid)" -o pid,etime,cmd
 tail -20 fan_control.log           # fresh entries since boot
-cat startup.log                    # empty unless the daemon failed to start
+cat startup.log                    # "Running as unit: ..." is a good start
 ```
 
 RUNNING
@@ -318,7 +318,7 @@ All state lives in the install directory:
 | `storagefancontrol.conf` | your settings |
 | `lib/` | vendored paho-mqtt, if using MQTT |
 | `fan_control.log` | rotating log, 10MB × 5 |
-| `startup.log` | only written if the daemon dies before logging starts |
+| `startup.log` | `Running as unit: storagefancontrol.service` on a good start; anything more means the daemon failed before logging began |
 | `storagefancontrol.pid` | pid of the running daemon |
 | `.lock` | single-instance guard |
 
