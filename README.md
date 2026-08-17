@@ -280,6 +280,11 @@ otherwise kill it.
 
 **10. Reboot and confirm.**
 
+Start it by hand with `sudo ./storagefancontrol.sh`. The daemon needs root for
+`/dev/ipmi0`, and its log, lock and pid files end up root-owned, so running the
+launcher unprivileged afterwards will not work. Post Init scripts already run as
+root, so this only affects manual starts.
+
 ```sh
 cat storagefancontrol.pid          # should match a live process
 ps -p "$(cat storagefancontrol.pid)" -o pid,etime,cmd

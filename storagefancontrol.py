@@ -458,21 +458,42 @@ def main(args):
     return 0
 
 
+def die(message):
+    """Fail before logging exists, so this has to go to stderr."""
+    sys.stderr.write("storagefancontrol: %s\n" % message)
+    sys.exit(1)
+
+
 if __name__ == "__main__":
     cli_args = parse_args()
+
+    # ipmitool needs /dev/ipmi0 and smartctl needs raw device access, so
+    # this only ever works as root. Checked before anything else, because
+    # every other failure from running unprivileged is a confusing one.
+    if os.geteuid() != 0:
+        die("must run as root (try: sudo %s)" % " ".join(sys.argv))
 
     # Mirror the log to the terminal for interactive runs. The daemon is
     # started detached from a Post Init script, so it has no tty and keeps
     # logging to file only.
-    configure_logging(
-        console=not cli_args.quiet
-        and (cli_args.once or cli_args.dry_run or sys.stderr.isatty())
-    )
+    try:
+        configure_logging(
+            console=not cli_args.quiet
+            and (cli_args.once or cli_args.dry_run or sys.stderr.isatty())
+        )
+    except (ValueError, OSError) as e:
+        die(
+            "could not open the log file %s: %s\n"
+            "Check ownership of the install directory." % (LOG_FILE, e)
+        )
 
     # Held for the lifetime of the process: if this handle is garbage
     # collected the advisory lock is released and a second instance can
     # start, leaving two daemons fighting over the fans.
-    lock_file = open(os.path.join(SCRIPT_DIR, ".lock"), "w")
+    try:
+        lock_file = open(os.path.join(SCRIPT_DIR, ".lock"), "w")
+    except OSError as e:
+        die("could not open the lock file: %s" % e)
     try:
         fcntl.lockf(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except IOError as e:

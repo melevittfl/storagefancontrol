@@ -12,6 +12,14 @@
 DIR=$(cd "$(dirname "$0")" && pwd) || exit 1
 cd "$DIR" || exit 1
 
+# Post Init scripts already run as root; this only catches running it by
+# hand. Without root, ipmitool cannot reach /dev/ipmi0 and the log file
+# is usually not writable either.
+if [ "$(id -u)" -ne 0 ]; then
+    echo "storagefancontrol: must run as root (try: sudo $0)" >&2
+    exit 1
+fi
+
 # Prefer the venv interpreter (paho-mqtt cannot be installed system-wide
 # on SCALE), falling back to the system python3 if no venv is present.
 if [ -x "$DIR/venv/bin/python3" ]; then
