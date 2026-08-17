@@ -81,10 +81,19 @@ curve = 34:20, 37:35, 38:60, 39:100
 # drives are 'sd' (sda, sdb, ...); NVMe drives are 'nvme'.
 device_filter = sd
 
-# Boot drive(s) to exclude, comma separated for a mirrored boot pool.
-# Find them with:  zpool status boot-pool
-# List all disks with:  lsblk -dno NAME,SIZE,MODEL
-boot_device = sda
+# Boot drive(s) to exclude from monitoring.
+#
+# 'auto' asks the boot pool which devices it sits on, and is what you
+# want. Linux assigns /dev/sd* letters in discovery order, so the boot
+# drive is not necessarily sda and can move between boots; a hardcoded
+# letter will eventually exclude the wrong disk and monitor the boot
+# drive in its place.
+#
+# To pin it by hand instead, use stable /dev/disk/by-id names, comma
+# separated for a mirrored boot pool. List them with:
+#   ls -l /dev/disk/by-id/ | grep -v part
+# Bare sdX names still work but are not stable across reboots.
+boot_device = auto
 
 # How many instances of 'smartctl' are run in parallel when polling for
 # the hard drive temperature.

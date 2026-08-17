@@ -18,6 +18,9 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
 SYS_BLOCK = "/sys/block"
+SYS_CLASS_BLOCK = "/sys/class/block"
+BY_ID_DIR = "/dev/disk/by-id"
+BOOT_POOL = "boot-pool"
 SMARTCTL_FALLBACK = "/usr/sbin/smartctl"
 
 # ATA SMART attribute ids that carry a temperature, in order of preference.
@@ -113,6 +116,92 @@ def extract_temperature(data):
     return None
 
 
+def parent_device(name):
+    """
+    Map a partition to the whole disk it lives on, via sysfs.
+
+    sda3 -> sda, nvme0n1p3 -> nvme0n1, and a whole disk maps to itself.
+    Done through the sysfs topology rather than by stripping digits off
+    the name, so every naming scheme works without special cases.
+    """
+    entry = os.path.join(SYS_CLASS_BLOCK, name)
+    if not os.path.exists(os.path.join(entry, "partition")):
+        return name
+    # /sys/class/block/sda3 resolves to .../block/sda/sda3
+    return os.path.basename(os.path.dirname(os.path.realpath(entry)))
+
+
+def resolve_device(value):
+    """
+    Resolve one identifier to a kernel device name (sda, nvme0n1).
+
+    Accepts a /dev/disk/by-id name, any absolute path under /dev, or a
+    bare kernel name. Returns None if it cannot be resolved, so a stale
+    config entry is reported rather than silently matching nothing.
+    """
+    value = value.strip()
+    if not value:
+        return None
+
+    candidates = []
+    if value.startswith("/"):
+        candidates.append(value)
+    else:
+        candidates.append(os.path.join(BY_ID_DIR, value))
+        candidates.append(os.path.join("/dev", value))
+
+    for path in candidates:
+        if os.path.exists(path):
+            return parent_device(os.path.basename(os.path.realpath(path)))
+
+    # Not present as a path: it may still be a valid kernel name for a
+    # device that is not currently attached.
+    if os.path.exists(os.path.join(SYS_CLASS_BLOCK, value)):
+        return parent_device(value)
+
+    return None
+
+
+def boot_pool_devices(pool=BOOT_POOL, timeout=15):
+    """
+    Return the kernel device names backing the boot pool.
+
+    zpool reports its vdevs by whatever stable path the pool was created
+    with (by-id or by-partuuid on TrueNAS), which is exactly the point:
+    those survive the kernel handing out different sd* letters between
+    boots.
+    """
+    zpool = shutil.which("zpool") or "/usr/sbin/zpool"
+    try:
+        child = subprocess.run(
+            [zpool, "list", "-vHP", pool],
+            capture_output=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        logging.warning("Could not run zpool to find the %s devices: %s", pool, e)
+        return set()
+
+    if child.returncode != 0:
+        logging.warning(
+            "zpool list %s failed: %s",
+            pool,
+            child.stderr.decode("utf-8", "replace").strip(),
+        )
+        return set()
+
+    devices = set()
+    for line in child.stdout.decode("utf-8", "replace").splitlines():
+        fields = line.split()
+        if not fields or not fields[0].startswith("/"):
+            continue
+        resolved = resolve_device(fields[0])
+        if resolved:
+            devices.add(resolved)
+
+    return devices
+
+
 class SmartReadError(Exception):
     """Raised when no drive temperature could be obtained. The caller
     must not interpret this as 'cool' and wind the fans down."""
@@ -136,7 +225,7 @@ class Smart:
         """
         self.block_devices = set()
         self.device_filter = "sd"
-        self.boot_device = "sda"
+        self.boot_device = "auto"
         self.highest_temperature = 0
         self.device_temperatures = {}
         self.smart_workers = 24
@@ -147,12 +236,57 @@ class Smart:
         # its own key, and read after they have all finished.
         self._standby = {}
 
-    def _boot_devices(self):
+    def _boot_devices(self, known):
         """
-        The boot_device setting accepts a comma separated list so that
-        mirrored boot pools can be excluded.
+        Kernel names of the drives to exclude, resolved fresh each time.
+        `known` is the set of devices actually present, used as a last
+        resort so a plain kernel name still excludes the right disk even
+        if it cannot be resolved through /dev.
+
+        'auto' asks the boot pool itself which devices it sits on, which
+        is the only answer that stays correct: /dev/sd* letters are
+        assigned in discovery order and can differ between boots, so a
+        hardcoded letter will eventually exclude the wrong disk and
+        monitor the boot drive in its place.
+
+        Anything else is treated as an identifier: a /dev/disk/by-id name
+        (stable), a path, or a bare kernel name (not stable). The setting
+        is a comma separated list so mirrored boot pools work.
         """
-        return {d.strip() for d in self.boot_device.split(",") if d.strip()}
+        excluded = set()
+
+        for entry in self.boot_device.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+
+            if entry.lower() == "auto":
+                found = boot_pool_devices()
+                if found:
+                    logging.debug("Boot pool devices: %s", ", ".join(sorted(found)))
+                else:
+                    logging.warning(
+                        "Could not determine the %s devices automatically; "
+                        "the boot drive may be monitored as if it were data",
+                        BOOT_POOL,
+                    )
+                excluded |= found
+                continue
+
+            resolved = resolve_device(entry)
+            if resolved is None:
+                if entry in known:
+                    excluded.add(entry)
+                    continue
+                logging.warning(
+                    "boot_device '%s' matched no device and was ignored", entry
+                )
+                continue
+            if resolved != entry:
+                logging.debug("boot_device '%s' resolved to %s", entry, resolved)
+            excluded.add(resolved)
+
+        return excluded
 
     def get_block_devices(self):
         """
@@ -176,7 +310,12 @@ class Smart:
                 continue
             devices.add(name)
 
-        devices -= self._boot_devices()
+        excluded = self._boot_devices(devices)
+        if excluded & devices:
+            logging.info(
+                "Excluding boot device(s): %s", ", ".join(sorted(excluded & devices))
+            )
+        devices -= excluded
         devices = {d for d in devices if d.startswith(self.device_filter)}
 
         if not devices:

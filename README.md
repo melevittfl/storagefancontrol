@@ -138,6 +138,13 @@ lsblk -dno NAME,SIZE,MODEL     # all disks
 zpool status boot-pool         # which one(s) are the boot drives
 ```
 
+You do not normally need to write the boot drive down: `boot_device = auto`
+asks the boot pool directly. Linux assigns `/dev/sd*` letters in discovery
+order, so the boot drive is not necessarily `sda` and can move between boots —
+a hardcoded letter will eventually exclude the wrong disk and monitor the boot
+drive in its place. To pin it by hand, use a stable `/dev/disk/by-id` name
+(`ls -l /dev/disk/by-id/ | grep -v part`) rather than a letter.
+
 **5. Create the config.**
 
 ```sh
@@ -147,8 +154,9 @@ cp storagefancontrol.conf.example storagefancontrol.conf
 Then edit it:
 
 - `device_filter` — `sd` for SATA/SAS drives, `nvme` for NVMe.
-- `boot_device` — the boot drive(s) from step 4, comma separated if the boot
-  pool is mirrored. These are excluded from monitoring.
+- `boot_device` — leave at `auto` to detect the boot pool's drives and exclude
+  them. Override with `/dev/disk/by-id` names, comma separated for a mirrored
+  boot pool.
 - PID/PWM values and, if you prefer a fan curve to a PID loop, `controller = curve`.
 - `[MQTT]` if you want Home Assistant integration.
 
