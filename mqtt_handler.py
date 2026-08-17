@@ -24,10 +24,12 @@ def setup_mqtt(config):
     username = config.get("MQTT", "username", fallback="")
     password = config.get("MQTT", "password", fallback="")
 
-    # paho-mqtt 2.x requires an explicit callback API version; the bare
-    # constructor raises. 1.x has no CallbackAPIVersion enum at all.
+    # paho-mqtt 2.x defaults to the version 1 callback API and warns that it
+    # is deprecated. This module registers no callbacks, so the version 2
+    # signatures cost nothing and it will keep working when version 1 is
+    # dropped. paho-mqtt 1.x has no CallbackAPIVersion enum at all.
     if hasattr(mqtt, "CallbackAPIVersion"):
-        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     else:
         client = mqtt.Client()
 

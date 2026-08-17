@@ -172,29 +172,26 @@ Instead, vendor the dependency into a `lib/` directory beside the script. It is
 added to `sys.path` automatically at startup, needs no venv, and survives SCALE
 updates along with the rest of the directory.
 
-If `python3 -m pip --version` works:
+SCALE has no pip either, so use the bundled installer. It uses only the standard
+library, fetches the wheel from PyPI, verifies its sha256, unpacks it into `lib/`
+and checks that it imports:
 
 ```sh
-python3 -m pip install --target lib --break-system-packages paho-mqtt
+python3 install_deps.py            # or: python3 install_deps.py 2.1.0
 ```
 
-`--target` keeps it out of the system site-packages, so `--break-system-packages`
-here only silences the PEP 668 refusal; nothing system-wide is touched.
-
-If pip is not available at all, paho-mqtt is pure Python, so the wheel can just
-be unpacked (a wheel is a zip). Download the `py3-none-any.whl` from
-<https://pypi.org/project/paho-mqtt/#files> and:
+If the NAS has no outbound internet access, do it by hand instead — paho-mqtt is
+pure Python and a wheel is just a zip. Download the `py3-none-any.whl` from
+<https://pypi.org/project/paho-mqtt/#files> on another machine, copy it over, and:
 
 ```sh
 mkdir -p lib && cd lib
 unzip -o ~/paho_mqtt-*.whl && rm -f paho_mqtt-*.whl && cd ..
-```
-
-Either way, check it:
-
-```sh
 python3 -c 'import sys; sys.path.insert(0, "lib"); import paho.mqtt.client; print("ok")'
 ```
+
+Re-run `install_deps.py` after a SCALE update only if you moved `lib/`; it lives
+in the install directory, so it normally persists.
 
 A venv still works if your build does have `ensurepip`; the launcher prefers
 `venv/bin/python3` when present. But `lib/` is the simpler path on SCALE.
