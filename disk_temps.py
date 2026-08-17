@@ -287,6 +287,9 @@ class Smart:
         # 'auto' prefers the drivetemp kernel module and falls back to
         # smartctl; 'drivetemp' or 'smartctl' pin one source.
         self.source = "auto"
+        # Drives drivetemp cannot see, remembered so the warning is not
+        # repeated every polling cycle.
+        self._warned_uncovered = set()
         self.smartctl = shutil.which("smartctl") or SMARTCTL_FALLBACK
         # Per-device flag, set when smartctl says the drive was skipped
         # because it was spun down. Written by worker threads, each under
@@ -476,6 +479,23 @@ class Smart:
             if readings:
                 for device, temperature in sorted(readings.items()):
                     logging.debug("%s: %s°C (drivetemp)", device, temperature)
+
+                # A drive drivetemp cannot see is a drive whose temperature
+                # never reaches the controller, so the hottest drive in the
+                # chassis could be one we are not looking at. Say so, once.
+                uncovered = set(self.block_devices) - set(readings)
+                if uncovered and uncovered != self._warned_uncovered:
+                    self._warned_uncovered = uncovered
+                    logging.warning(
+                        "drivetemp reports %d of %d monitored drive(s); no "
+                        "reading for %s. Those drives are not influencing fan "
+                        "speed. Set source = smartctl to include them, or "
+                        "exclude them with device_filter.",
+                        len(readings),
+                        len(self.block_devices),
+                        ", ".join(sorted(uncovered)),
+                    )
+
                 self.device_temperatures = readings
                 self.highest_temperature = max(readings.values())
                 return self.highest_temperature
