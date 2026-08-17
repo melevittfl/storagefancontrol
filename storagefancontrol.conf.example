@@ -57,7 +57,8 @@ pwm_safety = 32
 # 1.0 = matches front fans exactly. 0.5 = half speed. Never hands off to BIOS.
 rear_fan_ratio = 0.9
 
-# CPU temperature thresholds for rear fan control (read via sysctl dev.cpu).
+# CPU temperature thresholds for rear fan control (read from hwmon sysfs,
+# /sys/class/hwmon, via the coretemp driver).
 # Below cpu_temp_min the CPU contributes nothing to rear fan speed.
 # At cpu_temp_max the CPU drives the rear fan to pwm_max.
 # Rear fan always takes the max of the drive-based and CPU-based calculations.
@@ -75,12 +76,23 @@ cpu_temp_max = 80
 curve = 34:20, 37:35, 38:60, 39:100
 
 [Smart]
-# We only look at the temperature of hard drives we care about.
-device_filter = ada
-boot_device = ada0
+# Drives are discovered from /sys/block. Only devices whose name starts
+# with device_filter are monitored. On Linux/TrueNAS SCALE, SATA and SAS
+# drives are 'sd' (sda, sdb, ...); NVMe drives are 'nvme'.
+device_filter = sd
+
+# Boot drive(s) to exclude, comma separated for a mirrored boot pool.
+# Find them with:  zpool status boot-pool
+# List all disks with:  lsblk -dno NAME,SIZE,MODEL
+boot_device = sda
+
 # How many instances of 'smartctl' are run in parallel when polling for
 # the hard drive temperature.
 smart_workers = 30
+
+# Seconds to wait for a single smartctl call before giving up on that
+# drive. Without this a hung smartctl would stall the control loop.
+smartctl_timeout = 30
 
 [MQTT]
 enabled = false

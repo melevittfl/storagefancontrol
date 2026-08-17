@@ -1,0 +1,17 @@
+# Local settings, per the install instructions in the README.
+storagefancontrol.conf
+
+# Created next to the script on TrueNAS SCALE, since paho-mqtt cannot be
+# installed system-wide there.
+venv/
+
+# Runtime artefacts.
+.lock
+storagefancontrol.pid
+startup.log
+fan_control.log
+fan_control.log.*
+__pycache__/
+*.pyc
+
+.idea/

@@ -3,8 +3,14 @@ storagefancontrol
 Fan speed PID controller based on hard drive temperature
 --------------------------------------------------------
 
-This project was forked from a fan control script built for Linux. It has been 
-modified to work on FreeNAS 11 and using an ASRock Rack motherboard (specifically the E3C236D4U. Other models may differ).
+This project was forked from a fan control script built for Linux. It runs on
+TrueNAS SCALE using an ASRock Rack motherboard (specifically the E3C236D4U.
+Other models may differ).
+
+Earlier versions targeted FreeNAS 11 / TrueNAS Core (FreeBSD). The script is now
+Linux-only: drives are discovered from `/sys/block`, temperatures come from
+`smartctl --json`, and CPU temperature is read from hwmon sysfs. The `ipmitool`
+raw command is unchanged, as it is a property of the BMC rather than the OS.
 
 This script is meant for storage servers with lots of (spinning) hard drives.
 It regulates the chassis (PWM) fan speed based on the hard drive temperature. 
@@ -67,29 +73,165 @@ The script performs a poll every 30 seconds by default.
 
 Forked From: https://github.com/louwrentius/storagefancontrol
 
-INSTALL
+INSTALL (TrueNAS SCALE)
+-----------------------
+
+Everything lives in one directory: the script, its config, its log, its lock and
+pid file. Nothing is written outside it, so it can be installed anywhere root can
+read, including a home directory. The only absolute paths it uses are the kernel
+interfaces it reads (`/sys/block`, `/sys/class/hwmon`) and the `smartctl` and
+`ipmitool` binaries, which are located with `which` at startup.
+
+**1. Pick a location that survives a SCALE update.**
+
+Check where your home directory actually is:
+
+```sh
+getent passwd "$(whoami)"      # last-but-one field is the home directory
+```
+
+- **`/mnt/<pool>/...`** — on a data pool. Persists. Use this.
+- **`/home/<user>`** — on the boot pool. This is the OS dataset, and a major
+  update or reinstall can wipe it. Either move the user's home directory onto a
+  data pool in Credentials → Local Users, or install under `/mnt/<pool>/`
+  instead.
+
+If the pool is encrypted with a passphrase and not unlocked automatically, it
+will not be mounted when the Post Init script runs, and the daemon will not
+start at boot.
+
+**2. Clone it.**
+
+```sh
+cd ~                                  # or wherever you chose above
+git clone <repository-url> storagefancontrol
+cd storagefancontrol
+chmod +x storagefancontrol.sh storagefancontrol.py
+```
+
+The daemon must run as root: `smartctl` needs raw device access and `ipmitool`
+needs `/dev/ipmi0`. Post Init scripts already run as root, so the files only need
+to be readable by root; the directory itself can stay owned by your user. Use
+`sudo` when testing by hand.
+
+**3. Check IPMI is reachable.**
+
+```sh
+ls -l /dev/ipmi0
+which ipmitool
+```
+
+If `/dev/ipmi0` is missing, load the kernel modules:
+
+```sh
+modprobe ipmi_devintf ipmi_si
+```
+
+If they were needed, add `modprobe ipmi_devintf ipmi_si` as a Post Init
+**Command** entry (see step 8) so it happens on every boot, ordered before the
+script itself.
+
+**4. Identify your drives.**
+
+```sh
+lsblk -dno NAME,SIZE,MODEL     # all disks
+zpool status boot-pool         # which one(s) are the boot drives
+```
+
+**5. Create the config.**
+
+```sh
+cp storagefancontrol.conf.example storagefancontrol.conf
+```
+
+Then edit it:
+
+- `device_filter` — `sd` for SATA/SAS drives, `nvme` for NVMe.
+- `boot_device` — the boot drive(s) from step 4, comma separated if the boot
+  pool is mirrored. These are excluded from monitoring.
+- PID/PWM values and, if you prefer a fan curve to a PID loop, `controller = curve`.
+- `[MQTT]` if you want Home Assistant integration.
+
+`storagefancontrol.conf` is not tracked by git, so `git pull` will not overwrite
+your settings. The example file is kept up to date with all available options.
+
+**6. Install paho-mqtt, if using MQTT.**
+
+Only needed if you set `enabled = true` under `[MQTT]`; without it the script
+runs fine and just skips MQTT.
+
+SCALE disables `apt` and `pip` refuses to install system-wide (PEP 668), so use
+a venv next to the script. The launcher picks it up automatically:
+
+```sh
+python3 -m venv venv
+./venv/bin/pip install paho-mqtt
+```
+
+**7. Test before letting it drive the fans.**
+
+```sh
+sudo ./storagefancontrol.py --once --dry-run   # calculates everything, changes nothing
+tail -50 fan_control.log
+```
+
+Check that every data drive is listed and the boot drive is not, that the
+temperatures look right, and that the logged `ipmitool` command is what you
+expect. Then run one real cycle and confirm the fans respond:
+
+```sh
+sudo ./storagefancontrol.py --once
+ipmitool sdr type fan
+```
+
+**8. Start it on boot.**
+
+Go to System Settings → Advanced → Init/Shutdown Scripts, and add:
+
+| Field | Value |
+|---|---|
+| Type | Script |
+| Script | the full path to `storagefancontrol.sh`, e.g. `/mnt/tank/home/mark/storagefancontrol/storagefancontrol.sh` |
+| When | Post Init |
+
+`storagefancontrol.sh` works out its own location, so it needs no editing and can
+be moved along with the rest of the directory. It fully detaches the daemon with
+`setsid`, which matters because the Post Init runner enforces a timeout and would
+otherwise kill it.
+
+**9. Reboot and confirm.**
+
+```sh
+cat storagefancontrol.pid          # should match a live process
+ps -p "$(cat storagefancontrol.pid)" -o pid,etime,cmd
+tail -20 fan_control.log           # fresh entries since boot
+cat startup.log                    # empty unless the daemon failed to start
+```
+
+RUNNING
 --------
 
-The main script is launched from a shell script so that it can detach from the terminal
+All state lives in the install directory:
 
-1. Clone the repository or copy the files to your desired directory.
-2. Copy the example config and edit it for your system:
-   ```
-   cp storagefancontrol.conf.example storagefancontrol.conf
-   ```
-3. Edit `storagefancontrol.conf`:
-   - Set `device_filter` to match your drive prefix (e.g. `ada` for SATA on FreeBSD/TrueNAS)
-   - Set `boot_device` to exclude your boot drive (e.g. `ada0`)
-   - Adjust PID and PWM values for your hardware
-   - Optionally enable MQTT under `[MQTT]` for Home Assistant integration
-4. Install dependencies:
-   ```
-   pip install paho-mqtt
-   ```
-5. Modify the shell script to point to the directory from step 1.
-6. Configure TrueNAS/FreeNAS to run the shell script on boot.
+| File | Purpose |
+|---|---|
+| `storagefancontrol.conf` | your settings |
+| `fan_control.log` | rotating log, 10MB × 5 |
+| `startup.log` | only written if the daemon dies before logging starts |
+| `storagefancontrol.pid` | pid of the running daemon |
+| `.lock` | single-instance guard |
 
-Note: `storagefancontrol.conf` is not tracked by git so your local settings
-will not be overwritten when pulling updates. The example file is kept
-up to date with all available options.
+```sh
+kill -HUP  "$(cat storagefancontrol.pid)"   # reload config, keep controller state
+kill -TERM "$(cat storagefancontrol.pid)"   # stop, setting fans to pwm_safety
+```
+
+Only one instance can run at a time; a second exits immediately. The guard is the
+`flock` on `.lock`, not the pid file, so a stale `storagefancontrol.pid` left by
+an unclean shutdown is harmless.
+
+Drives are polled with `smartctl -n standby`, so sleeping drives are left asleep
+and simply report no temperature. If *no* drive can be read at all — smartctl
+missing, for instance — the script holds the current fan speed and logs an error
+rather than treating the absence of readings as "cold" and winding the fans down.
 

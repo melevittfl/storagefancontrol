@@ -1,18 +1,20 @@
-#!/usr/local/bin/python
+#!/usr/bin/env python3
 """
 This program controls the chassis fan speed through PWM based on the temperature
 of the hottest hard drive in the chassis. It uses the SMART utility
 for reading hard drive temperatures.
+
+Targets TrueNAS SCALE (Linux) on an ASRock Rack E3C236D4U.
 """
+import argparse
 import atexit
 import errno
 import os
+import shutil
 import signal
 import sys
 import subprocess
-import re
 import time
-import multiprocessing as mp
 import configparser
 
 import fcntl
@@ -21,6 +23,11 @@ import logging.config
 from log_config import *
 from mqtt_handler import setup_mqtt, publish_discovery, publish_readings
 from fan_curve import FanCurve
+from disk_temps import Smart, SmartReadError
+from cpu_temp import get_cpu_temperature
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+IPMITOOL_FALLBACK = "/usr/bin/ipmitool"
 
 
 class PID:
@@ -102,131 +109,6 @@ class PID:
         return "P={:3} | I={:3} | D={:3} | Err={:3}|".format(P, I, D, E)
 
 
-class Smart:
-    """
-    Uses SMART data from storage devices to determine the temperature
-    of the hottest drive.
-    """
-
-    def __init__(self):
-        """
-        Init.
-        """
-        self.block_devices = ""
-        self.device_filter = "sd"
-        self.boot_device = "ada0"
-        self.highest_temperature = 0
-        self.device_temperatures = {}
-        self.smart_workers = 24
-
-    def get_block_devices(self):
-        """
-        Call 'geom part status -s' to get a list of drives
-        """
-        try:
-            child = subprocess.Popen(
-                ["geom", "part", "status", "-s"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-        except OSError as e:
-            logging.error("Error reading block devices")
-            logging.error(e)
-            sys.exit(1)
-
-        stdout, stderr = child.communicate()
-
-        devices = set()
-        for line in stdout.splitlines():
-            devices.add(str(line.split()[2], "utf-8"))
-
-        devices.discard(self.boot_device)
-        devices = {d for d in devices if d.startswith(self.device_filter)}
-
-        self.block_devices = devices
-
-    def get_smart_data(self, device):
-        """
-        Call the smartctl command line utilily on a device to get the raw
-        smart data output.
-        """
-
-        device = "/dev/" + device
-
-        try:
-            child = subprocess.Popen(
-                ["/usr/local/sbin/smartctl", "-a", device],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-        except OSError:
-            print("Executing smartctl gave an error,")
-            print("is smartmontools installed?")
-            sys.exit(1)
-
-        rawdata = child.communicate()
-
-        smartdata = str(rawdata[0], "utf-8")
-        return smartdata
-
-    def get_parameter_from_smart(self, data, parameter, distance):
-        """
-        Retreives the desired value from the raw smart data.
-        """
-        regex = re.compile(parameter + "(.*)")
-        match = regex.search(data)
-
-        if match:
-            tmp = match.group(1)
-            length = len(tmp.split("   "))
-            if length <= distance:
-                distance = length - 1
-
-            #
-            # SMART data is often a bit of a mess,  so this
-            # hack is used to cope with this.
-            #
-
-            try:
-                model = match.group(1).split("   ")[distance].split(" ")[1]
-            except:
-                model = match.group(1).split("   ")[distance + 1].split(" ")[1]
-            return str(model)
-        return 0
-
-    def get_temperature(self, device):
-        """
-        Get the current temperature of a block device.
-        """
-        smart_data = self.get_smart_data(device)
-        temperature = int(
-            self.get_parameter_from_smart(smart_data, "Temperature_Celsius", 10)
-        )
-        return temperature
-
-    def get_highest_temperature(self):
-        """
-        Get the highest temperature of all the block devices in the system.
-        Because retrieving SMART data is slow, multiprocessing is used
-        to collect SMART data in parallel from multiple devices.
-        """
-        highest_temperature = 0
-        devices = list(self.block_devices)
-        pool = mp.Pool(processes=int(self.smart_workers))
-        results = pool.map(self.get_temperature, devices)
-        pool.close()
-        pool.join()
-
-        self.device_temperatures = dict(zip(devices, results))
-        for device, temperature in self.device_temperatures.items():
-            logging.debug("%s: %s°C", device, temperature)
-            if temperature > highest_temperature:
-                highest_temperature = temperature
-        self.highest_temperature = highest_temperature
-
-        return self.highest_temperature
-
-
 class FanControl:
     """
     Controls chassis fan speed via ipmitool PWM commands.
@@ -243,6 +125,8 @@ class FanControl:
         self.fan_speed = 50
         self.pwm_value = 0
         self.previous_pwm_value = 0
+        self.dry_run = False
+        self.ipmitool = shutil.which("ipmitool") or IPMITOOL_FALLBACK
 
     def get_pwm(self):
         """
@@ -275,7 +159,6 @@ class FanControl:
             )
             value = 0
 
-        IPMITOOL = "/usr/local/bin/ipmitool"
         if value == 0:
             raw_rear = 0
         else:
@@ -301,21 +184,33 @@ class FanControl:
 
         logging.debug(ipmitool_args)
 
-        ipmi_cmd = [IPMITOOL] + (ipmitool_args.split())
+        ipmi_cmd = [self.ipmitool] + (ipmitool_args.split())
 
         self.pwm_value = value
 
         if self.previous_pwm_value != value:
-            logging.info("PWM value changed. Updating fan speed")
-            try:
-                child = subprocess.Popen(
-                    ipmi_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                )
-            except OSError:
-                print("Executing ipmitool gave an error,")
-                sys.exit(1)
+            if self.dry_run:
+                logging.info("DRY RUN, not executing: %s", " ".join(ipmi_cmd))
+                self.previous_pwm_value = value
+                return
 
-            output = child.communicate()
+            logging.info("PWM value changed. Updating fan speed")
+            # Never raises: this is also reached from the atexit safety
+            # handler, where an exception would be swallowed and the
+            # failure lost.
+            try:
+                child = subprocess.run(ipmi_cmd, capture_output=True, timeout=30)
+            except (OSError, subprocess.TimeoutExpired) as e:
+                logging.error("Executing ipmitool failed: %s", e)
+                return
+
+            if child.returncode != 0:
+                logging.error(
+                    "ipmitool exited %s: %s",
+                    child.returncode,
+                    child.stderr.decode("utf-8", "replace").strip(),
+                )
+                return
 
             self.previous_pwm_value = value
         else:
@@ -369,33 +264,19 @@ def reload_config_values(config, chassis, controller, temp_source):
     temp_source.device_filter = config.get("Smart", "device_filter")
     temp_source.boot_device = config.get("Smart", "boot_device")
     temp_source.smart_workers = config.getint("Smart", "smart_workers")
+    temp_source.smartctl_timeout = config.getint("Smart", "smartctl_timeout", fallback=30)
     temp_source.get_block_devices()
 
     logging.info("Config reloaded. Controller mode and MQTT changes require a restart.")
 
 
-def get_cpu_temperature():
-    """Return the highest CPU core temperature via sysctl."""
-    try:
-        child = subprocess.Popen(
-            ["sysctl", "-a", "dev.cpu"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        stdout, _ = child.communicate()
-        temps = []
-        for line in stdout.decode("utf-8").splitlines():
-            if "temperature" in line:
-                temp_str = line.split(":")[1].strip().rstrip("C")
-                temps.append(float(temp_str))
-        return max(temps) if temps else 0.0
-    except Exception as e:
-        logging.error("Failed to read CPU temperature: %s", e)
-        return 0.0
-
-
 def read_config():
-    config_file = "./storagefancontrol.conf"
+    # Resolved against the script directory, not the CWD: TrueNAS SCALE
+    # Post Init scripts run from an unpredictable working directory.
+    config_file = os.path.join(SCRIPT_DIR, "storagefancontrol.conf")
+    if not os.path.exists(config_file):
+        logging.error("Config file not found: %s", config_file)
+        sys.exit(1)
     conf = configparser.ConfigParser()
     conf.read(config_file)
     return conf
@@ -436,7 +317,13 @@ def get_temp_source(config):
     temp_source.device_filter = config.get("Smart", "device_filter")
     temp_source.boot_device = config.get("Smart", "boot_device")
     temp_source.smart_workers = config.getint("Smart", "smart_workers")
+    temp_source.smartctl_timeout = config.getint("Smart", "smartctl_timeout", fallback=30)
     temp_source.get_block_devices()
+    logging.info(
+        "Monitoring %d drive(s): %s",
+        len(temp_source.block_devices),
+        ", ".join(sorted(temp_source.block_devices)),
+    )
     return temp_source
 
 
@@ -453,11 +340,41 @@ def get_chassis_settings(config):
     return chassis
 
 
-def main():
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="log the ipmitool command instead of running it, so nothing touches the fans",
+    )
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="run a single poll cycle and exit",
+    )
+    return parser.parse_args()
+
+
+def main(args):
     config = read_config()
     polling_interval = config.getfloat("General", "polling_interval")
 
     chassis = get_chassis_settings(config)
+    chassis.dry_run = args.dry_run
+    if args.dry_run:
+        logging.info("Dry run: fan speeds will be calculated but not applied")
+
+    # Fail fast at startup rather than from inside the control loop, where
+    # the fans would already be under our control but unreachable.
+    if not os.access(chassis.ipmitool, os.X_OK):
+        logging.error(
+            "ipmitool not found or not executable at %s. On TrueNAS SCALE it "
+            "should be at %s; check that /dev/ipmi0 exists too.",
+            chassis.ipmitool,
+            IPMITOOL_FALLBACK,
+        )
+        return 1
+    logging.info("Using ipmitool at %s", chassis.ipmitool)
 
     def set_safety_speed():
         logging.warning("Exiting: setting fans to safety speed (PWM %s)", chassis.pwm_safety)
@@ -486,7 +403,18 @@ def main():
                 polling_interval = config.getfloat("General", "polling_interval")
                 reload_config_values(config, chassis, controller, temp_source)
 
-            highest_temperature = temp_source.get_highest_temperature()
+            try:
+                highest_temperature = temp_source.get_highest_temperature()
+            except SmartReadError as e:
+                # No drive could be read at all. Treating that as 0C would
+                # wind the fans down while the drives cook, so hold the
+                # current PWM and try again next cycle.
+                logging.error("%s. Holding PWM at %s", e, chassis.get_pwm())
+                if args.once:
+                    return 1
+                time.sleep(polling_interval)
+                continue
+
             cpu_temp = get_cpu_temperature()
             logging.debug("CPU temp: %.1f°C", cpu_temp)
             chassis.cpu_temp = cpu_temp
@@ -495,24 +423,41 @@ def main():
             log(highest_temperature, chassis, controller)
             if mqtt_client:
                 publish_readings(mqtt_client, config, temp_source.device_temperatures, chassis.fan_speed, cpu_temp)
+
+            if args.once:
+                return 0
+
             time.sleep(polling_interval)
 
     except (KeyboardInterrupt, SystemExit):
         pass
 
+    return 0
+
 
 if __name__ == "__main__":
     logging.config.dictConfig(LOG_SETTINGS)
 
-    f = open(".lock", "w")
+    # Held for the lifetime of the process: if this handle is garbage
+    # collected the advisory lock is released and a second instance can
+    # start, leaving two daemons fighting over the fans.
+    lock_file = open(os.path.join(SCRIPT_DIR, ".lock"), "w")
     try:
-        fcntl.lockf(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.lockf(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except IOError as e:
-        if e.errno == errno.EAGAIN:
+        if e.errno in (errno.EAGAIN, errno.EACCES):
             logging.error("Another instance already running")
             sys.exit(-1)
+        raise
 
-    with open('/var/run/storagefancontrol.pid', 'w') as f:
-        f.write(str(os.getpid()))
+    # Kept beside the script rather than in /var/run so that the whole
+    # install is self-contained and works from any directory. The .lock
+    # above is what actually enforces a single instance; this file is
+    # only so the process is easy to signal.
+    try:
+        with open(os.path.join(SCRIPT_DIR, "storagefancontrol.pid"), "w") as pid_file:
+            pid_file.write(str(os.getpid()))
+    except OSError as e:
+        logging.warning("Could not write pid file: %s", e)
 
-    main()
+    sys.exit(main(parse_args()))

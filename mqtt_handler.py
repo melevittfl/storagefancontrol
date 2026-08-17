@@ -1,6 +1,5 @@
 import json
 import logging
-import paho.mqtt.client as mqtt
 
 
 def setup_mqtt(config):
@@ -8,12 +7,30 @@ def setup_mqtt(config):
     if not config.getboolean("MQTT", "enabled", fallback=False):
         return None
 
+    # Imported here rather than at module level so that fan control still
+    # works without paho-mqtt installed, which matters on TrueNAS SCALE
+    # where it can only live in a venv.
+    try:
+        import paho.mqtt.client as mqtt
+    except ImportError:
+        logging.error(
+            "MQTT is enabled but paho-mqtt is not installed. "
+            "Continuing without MQTT."
+        )
+        return None
+
     broker = config.get("MQTT", "broker")
     port = config.getint("MQTT", "port")
     username = config.get("MQTT", "username", fallback="")
     password = config.get("MQTT", "password", fallback="")
 
-    client = mqtt.Client()
+    # paho-mqtt 2.x requires an explicit callback API version; the bare
+    # constructor raises. 1.x has no CallbackAPIVersion enum at all.
+    if hasattr(mqtt, "CallbackAPIVersion"):
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
+    else:
+        client = mqtt.Client()
+
     if username:
         client.username_pw_set(username, password)
 
