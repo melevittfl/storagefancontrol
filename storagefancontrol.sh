@@ -40,19 +40,30 @@ fi
 STARTUP_LOG="$DIR/startup.log"
 : >"$STARTUP_LOG"
 
-# setsid puts the daemon in a new session with no controlling terminal, so
-# it survives the Post Init runner or the shell that started it going away.
-# That is all nohup would have bought us, and chaining the two only adds a
-# second binary that has to be executable: on TrueNAS SCALE 'setsid nohup'
-# fails with "failed to execute nohup: Function not implemented".
+# systemd-run puts the daemon in its own unit under system.slice, which is
+# what actually matters here. setsid alone gives it a new session but
+# leaves it in the cgroup of whatever started it; when that is a login
+# session, logging out tears the cgroup down and the daemon loses the
+# ability to spawn processes, so ipmitool starts failing with ENOSYS
+# (errno 38) while the daemon carries on running and controlling nothing.
 #
-# nohup is kept purely as a fallback for the case where setsid is missing,
-# and a plain background job as a last resort.
-# stdin comes from /dev/null so nothing retains a handle on the terminal.
-if command -v setsid >/dev/null 2>&1; then
+# --collect removes the unit once it exits, so repeated starts do not trip
+# over a leftover unit name.
+if command -v systemd-run >/dev/null 2>&1; then
+    systemd-run \
+        --unit=storagefancontrol \
+        --description="storagefancontrol chassis fan control" \
+        --working-directory="$DIR" \
+        --collect \
+        --property=Restart=on-failure \
+        --property=RestartSec=30 \
+        --property=StandardOutput="append:$STARTUP_LOG" \
+        --property=StandardError="append:$STARTUP_LOG" \
+        "$PYTHON" "$DIR/storagefancontrol.py" >/dev/null 2>>"$STARTUP_LOG"
+elif command -v setsid >/dev/null 2>&1; then
+    # No systemd: a new session is the best we can do. Fine at boot, but
+    # started from a login shell this will die with it.
     setsid "$PYTHON" "$DIR/storagefancontrol.py" >"$STARTUP_LOG" 2>&1 </dev/null &
-elif command -v nohup >/dev/null 2>&1; then
-    nohup "$PYTHON" "$DIR/storagefancontrol.py" >"$STARTUP_LOG" 2>&1 </dev/null &
 else
     "$PYTHON" "$DIR/storagefancontrol.py" >"$STARTUP_LOG" 2>&1 </dev/null &
 fi

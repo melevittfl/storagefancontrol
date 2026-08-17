@@ -372,6 +372,31 @@ def parse_args():
     return parser.parse_args()
 
 
+def _log_placement():
+    """
+    Record which cgroup the daemon landed in.
+
+    A daemon left in the cgroup of the login session that started it loses
+    the ability to spawn processes when that session is torn down, so
+    ipmitool starts failing with ENOSYS while the daemon itself keeps
+    running. Logging this makes that visible at startup instead of an hour
+    later.
+    """
+    try:
+        with open("/proc/self/cgroup") as f:
+            cgroup = f.read().strip().splitlines()[-1].split(":")[-1]
+    except (OSError, IndexError):
+        return
+
+    logging.info("Running in cgroup %s", cgroup)
+    if "session-" in cgroup or "user-" in cgroup:
+        logging.warning(
+            "This is a login session cgroup. The daemon will stop being able "
+            "to run ipmitool when that session ends. Start it via "
+            "storagefancontrol.sh, which places it in a system slice."
+        )
+
+
 def main(args):
     config = read_config()
     polling_interval = config.getfloat("General", "polling_interval")
@@ -392,6 +417,7 @@ def main(args):
         )
         return 1
     logging.info("Using ipmitool at %s", chassis.ipmitool)
+    _log_placement()
 
     def set_safety_speed():
         logging.warning("Exiting: setting fans to safety speed (PWM %s)", chassis.pwm_safety)
