@@ -274,9 +274,25 @@ Go to System Settings → Advanced → Init/Shutdown Scripts, and add:
 | When | Post Init |
 
 `storagefancontrol.sh` works out its own location, so it needs no editing and can
-be moved along with the rest of the directory. It fully detaches the daemon with
-`setsid`, which matters because the Post Init runner enforces a timeout and would
-otherwise kill it.
+be moved along with the rest of the directory.
+
+It starts the daemon with `systemd-run`, as a transient unit under
+`system.slice`. That matters for two reasons: the Post Init runner enforces a
+timeout and would otherwise kill the daemon along with the script, and a daemon
+left in the cgroup of the session that started it loses the ability to spawn
+processes when that session ends — `ipmitool` then fails with `ENOSYS` on every
+cycle while the daemon keeps running, leaving the fans stuck at their last
+setting. Being in its own unit also brings the usual controls:
+
+```sh
+systemctl status storagefancontrol
+systemctl stop storagefancontrol
+journalctl -u storagefancontrol
+```
+
+The unit is transient, so it exists only while running and does not need
+installing or removing. `Restart=on-failure` restarts the daemon after 30s if it
+crashes. Where systemd is unavailable the launcher falls back to `setsid`.
 
 **10. Reboot and confirm.**
 
