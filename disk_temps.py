@@ -69,6 +69,15 @@ def _messages(data):
     return out
 
 
+def _is_smart_disabled(messages):
+    """
+    True when the drive supports SMART but has it switched off, so
+    smartctl declines to read anything. Fixable, and worth saying how.
+    """
+    joined = " ".join(messages).upper()
+    return "SMART DISABLED" in joined or "SMART SUPPORT IS: DISABLED" in joined
+
+
 def _is_standby(messages):
     """
     True when smartctl skipped the drive because it was spun down.
@@ -371,6 +380,13 @@ class Smart:
             if _is_standby(messages):
                 self._standby[device] = True
                 logging.debug("%s: in standby, not woken to read it", device)
+            elif _is_smart_disabled(messages):
+                logging.error(
+                    "%s: SMART is disabled on the drive, so no temperature can "
+                    "be read. Enable it with: smartctl -s on /dev/%s",
+                    device,
+                    device,
+                )
             else:
                 logging.warning(
                     "%s: no temperature reported. smartctl exit %s%s",

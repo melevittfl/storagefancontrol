@@ -128,7 +128,7 @@ modprobe ipmi_devintf ipmi_si
 ```
 
 If they were needed, add `modprobe ipmi_devintf ipmi_si` as a Post Init
-**Command** entry (see step 8) so it happens on every boot, ordered before the
+**Command** entry (see step 9) so it happens on every boot, ordered before the
 script itself.
 
 **4. Identify your drives.**
@@ -204,7 +204,26 @@ in the install directory, so it normally persists.
 A venv still works if your build does have `ensurepip`; the launcher prefers
 `venv/bin/python3` when present. But `lib/` is the simpler path on SCALE.
 
-**7. Test before letting it drive the fans.**
+**7. Check SMART is enabled on the drives.**
+
+Temperatures come from SMART, and a drive can support SMART while having it
+switched off, in which case smartctl refuses to read anything:
+
+```sh
+sudo smartctl -i /dev/sdb | grep 'SMART support is'
+```
+
+If it says `Disabled`, turn it on for each data drive. The setting is stored on
+the drive and persists across reboots:
+
+```sh
+for d in /dev/sd?; do sudo smartctl -s on "$d"; done
+```
+
+Also enable S.M.A.R.T. for the disks in the TrueNAS UI (Storage → Disks) so it
+is managed there too.
+
+**8. Test before letting it drive the fans.**
 
 ```sh
 sudo ./storagefancontrol.py --once --dry-run   # calculates everything, changes nothing
@@ -222,7 +241,7 @@ sudo ./storagefancontrol.py --once
 ipmitool sdr type fan
 ```
 
-**8. Start it on boot.**
+**9. Start it on boot.**
 
 Go to System Settings → Advanced → Init/Shutdown Scripts, and add:
 
@@ -237,7 +256,7 @@ be moved along with the rest of the directory. It fully detaches the daemon with
 `setsid`, which matters because the Post Init runner enforces a timeout and would
 otherwise kill it.
 
-**9. Reboot and confirm.**
+**10. Reboot and confirm.**
 
 ```sh
 cat storagefancontrol.pid          # should match a live process
