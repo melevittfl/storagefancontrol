@@ -35,18 +35,26 @@ fi
 
 # Anything the daemon writes before logging is configured (a syntax error,
 # a missing module) would otherwise vanish into /dev/null and the failure
-# would be invisible on a headless boot.
+# would be invisible on a headless boot. Truncated per start: appending
+# means a stale failure from an earlier attempt gets blamed for this one.
 STARTUP_LOG="$DIR/startup.log"
+: >"$STARTUP_LOG"
 
-# setsid detaches from the Post Init session so the daemon is not killed
-# when this script returns. It is part of util-linux and present on SCALE;
-# fall back to plain nohup if it is ever missing.
-# stdin is closed as well as stdout/stderr redirected, so nothing keeps a
-# handle on the terminal that started us.
+# setsid puts the daemon in a new session with no controlling terminal, so
+# it survives the Post Init runner or the shell that started it going away.
+# That is all nohup would have bought us, and chaining the two only adds a
+# second binary that has to be executable: on TrueNAS SCALE 'setsid nohup'
+# fails with "failed to execute nohup: Function not implemented".
+#
+# nohup is kept purely as a fallback for the case where setsid is missing,
+# and a plain background job as a last resort.
+# stdin comes from /dev/null so nothing retains a handle on the terminal.
 if command -v setsid >/dev/null 2>&1; then
-    setsid nohup "$PYTHON" "$DIR/storagefancontrol.py" >>"$STARTUP_LOG" 2>&1 </dev/null &
+    setsid "$PYTHON" "$DIR/storagefancontrol.py" >"$STARTUP_LOG" 2>&1 </dev/null &
+elif command -v nohup >/dev/null 2>&1; then
+    nohup "$PYTHON" "$DIR/storagefancontrol.py" >"$STARTUP_LOG" 2>&1 </dev/null &
 else
-    nohup "$PYTHON" "$DIR/storagefancontrol.py" >>"$STARTUP_LOG" 2>&1 </dev/null &
+    "$PYTHON" "$DIR/storagefancontrol.py" >"$STARTUP_LOG" 2>&1 </dev/null &
 fi
 
 # Confirm it actually stayed up, rather than reporting success for a
