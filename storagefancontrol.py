@@ -361,6 +361,11 @@ def parse_args():
         action="store_true",
         help="run a single poll cycle and exit",
     )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="log to the file only, never to the terminal",
+    )
     return parser.parse_args()
 
 
@@ -445,7 +450,15 @@ def main(args):
 
 
 if __name__ == "__main__":
-    logging.config.dictConfig(LOG_SETTINGS)
+    cli_args = parse_args()
+
+    # Mirror the log to the terminal for interactive runs. The daemon is
+    # started detached from a Post Init script, so it has no tty and keeps
+    # logging to file only.
+    configure_logging(
+        console=not cli_args.quiet
+        and (cli_args.once or cli_args.dry_run or sys.stderr.isatty())
+    )
 
     # Held for the lifetime of the process: if this handle is garbage
     # collected the advisory lock is released and a second instance can
@@ -469,4 +482,4 @@ if __name__ == "__main__":
     except OSError as e:
         logging.warning("Could not write pid file: %s", e)
 
-    sys.exit(main(parse_args()))
+    sys.exit(main(cli_args))

@@ -200,8 +200,10 @@ A venv still works if your build does have `ensurepip`; the launcher prefers
 
 ```sh
 sudo ./storagefancontrol.py --once --dry-run   # calculates everything, changes nothing
-tail -50 fan_control.log
 ```
+
+Interactive runs mirror the log to the terminal; the daemon, having no tty,
+logs only to `fan_control.log`. Add `--quiet` to suppress the terminal copy.
 
 Check that every data drive is listed and the boot drive is not, that the
 temperatures look right, and that the logged `ipmitool` command is what you
