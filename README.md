@@ -157,16 +157,47 @@ your settings. The example file is kept up to date with all available options.
 
 **6. Install paho-mqtt, if using MQTT.**
 
-Only needed if you set `enabled = true` under `[MQTT]`; without it the script
-runs fine and just skips MQTT.
+Only needed if you set `enabled = true` under `[MQTT]`. Without it the script
+runs normally and logs that it is skipping MQTT, so if you are not using Home
+Assistant you can skip this step entirely.
 
-SCALE disables `apt` and `pip` refuses to install system-wide (PEP 668), so use
-a venv next to the script. The launcher picks it up automatically:
+Installing Python packages on SCALE is awkward: `apt` is disabled, `pip` refuses
+to install system-wide (PEP 668), and `python3 -m venv` usually fails with
+*"ensurepip is not available"* because SCALE ships Python without the
+`python3-venv` package. **Do not follow that error's advice to run
+`apt install python3.11-venv`** — apt is disabled, and anything installed into
+the OS dataset is wiped by the next update.
+
+Instead, vendor the dependency into a `lib/` directory beside the script. It is
+added to `sys.path` automatically at startup, needs no venv, and survives SCALE
+updates along with the rest of the directory.
+
+If `python3 -m pip --version` works:
 
 ```sh
-python3 -m venv venv
-./venv/bin/pip install paho-mqtt
+python3 -m pip install --target lib --break-system-packages paho-mqtt
 ```
+
+`--target` keeps it out of the system site-packages, so `--break-system-packages`
+here only silences the PEP 668 refusal; nothing system-wide is touched.
+
+If pip is not available at all, paho-mqtt is pure Python, so the wheel can just
+be unpacked (a wheel is a zip). Download the `py3-none-any.whl` from
+<https://pypi.org/project/paho-mqtt/#files> and:
+
+```sh
+mkdir -p lib && cd lib
+unzip -o ~/paho_mqtt-*.whl && rm -f paho_mqtt-*.whl && cd ..
+```
+
+Either way, check it:
+
+```sh
+python3 -c 'import sys; sys.path.insert(0, "lib"); import paho.mqtt.client; print("ok")'
+```
+
+A venv still works if your build does have `ensurepip`; the launcher prefers
+`venv/bin/python3` when present. But `lib/` is the simpler path on SCALE.
 
 **7. Test before letting it drive the fans.**
 
@@ -216,6 +247,7 @@ All state lives in the install directory:
 | File | Purpose |
 |---|---|
 | `storagefancontrol.conf` | your settings |
+| `lib/` | vendored paho-mqtt, if using MQTT |
 | `fan_control.log` | rotating log, 10MB × 5 |
 | `startup.log` | only written if the daemon dies before logging starts |
 | `storagefancontrol.pid` | pid of the running daemon |

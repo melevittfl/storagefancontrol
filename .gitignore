@@ -2,8 +2,10 @@
 storagefancontrol.conf
 
 # Created next to the script on TrueNAS SCALE, since paho-mqtt cannot be
-# installed system-wide there.
+# installed system-wide there. lib/ is the vendored-dependency directory
+# used when python3 -m venv is unavailable (no ensurepip).
 venv/
+lib/
 
 # Runtime artefacts.
 .lock

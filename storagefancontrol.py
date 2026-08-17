@@ -20,14 +20,23 @@ import configparser
 import fcntl
 import logging
 import logging.config
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+IPMITOOL_FALLBACK = "/usr/bin/ipmitool"
+
+# Third-party dependencies (only paho-mqtt) may be vendored into ./lib
+# rather than a venv. TrueNAS SCALE ships Python without ensurepip, so
+# `python3 -m venv` fails, and apt is disabled so the python3-venv package
+# it suggests cannot be installed. See the README.
+_LIB_DIR = os.path.join(SCRIPT_DIR, "lib")
+if os.path.isdir(_LIB_DIR) and _LIB_DIR not in sys.path:
+    sys.path.insert(0, _LIB_DIR)
+
 from log_config import *
 from mqtt_handler import setup_mqtt, publish_discovery, publish_readings
 from fan_curve import FanCurve
 from disk_temps import Smart, SmartReadError
 from cpu_temp import get_cpu_temperature
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-IPMITOOL_FALLBACK = "/usr/bin/ipmitool"
 
 
 class PID:
