@@ -274,6 +274,7 @@ def reload_config_values(config, chassis, controller, temp_source):
     temp_source.boot_device = config.get("Smart", "boot_device")
     temp_source.smart_workers = config.getint("Smart", "smart_workers")
     temp_source.smartctl_timeout = config.getint("Smart", "smartctl_timeout", fallback=30)
+    temp_source.source = config.get("Smart", "source", fallback="auto").strip().lower()
     temp_source.get_block_devices()
 
     logging.info("Config reloaded. Controller mode and MQTT changes require a restart.")
@@ -327,7 +328,9 @@ def get_temp_source(config):
     temp_source.boot_device = config.get("Smart", "boot_device")
     temp_source.smart_workers = config.getint("Smart", "smart_workers")
     temp_source.smartctl_timeout = config.getint("Smart", "smartctl_timeout", fallback=30)
+    temp_source.source = config.get("Smart", "source", fallback="auto").strip().lower()
     temp_source.get_block_devices()
+    logging.info("Temperature source: %s", temp_source.source)
     logging.info(
         "Monitoring %d drive(s): %s",
         len(temp_source.block_devices),

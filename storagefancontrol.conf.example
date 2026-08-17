@@ -76,6 +76,18 @@ cpu_temp_max = 80
 curve = 34:20, 37:35, 38:60, 39:100
 
 [Smart]
+# Where drive temperatures come from.
+#
+# auto      Prefer the drivetemp kernel module, fall back to smartctl.
+# drivetemp Kernel module only. Reads over ATA SCT Command Transport, so
+#           it works even on drives with SMART switched off, costs no
+#           subprocesses, and will not spin up a sleeping drive. This is
+#           the same source the TrueNAS dashboard uses from 25.10 on.
+#           Load it with 'modprobe drivetemp'.
+# smartctl  Run smartctl per drive. Needs SMART enabled on each drive
+#           ('smartctl -s on /dev/sdX').
+source = auto
+
 # Drives are discovered from /sys/block. Only devices whose name starts
 # with device_filter are monitored. On Linux/TrueNAS SCALE, SATA and SAS
 # drives are 'sd' (sda, sdb, ...); NVMe drives are 'nvme'.

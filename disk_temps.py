@@ -10,6 +10,7 @@ Drives are polled with `-n standby` so that a sleeping drive is left
 asleep and simply reports no temperature.
 """
 
+import glob
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 SYS_BLOCK = "/sys/block"
 SYS_CLASS_BLOCK = "/sys/class/block"
+HWMON_ROOT = "/sys/class/hwmon"
 BY_ID_DIR = "/dev/disk/by-id"
 BOOT_POOL = "boot-pool"
 SMARTCTL_FALLBACK = "/usr/sbin/smartctl"
@@ -56,6 +58,49 @@ def _attribute_temperature(data):
             return value & 0xFF
 
     return None
+
+
+def drivetemp_temperatures():
+    """
+    Map block device name to temperature using the drivetemp hwmon driver.
+
+    drivetemp reads the drive over ATA SCT Command Transport, falling back
+    to SMART attributes, so it still works on drives that have SMART
+    switched off. It is a plain sysfs read: no subprocess per drive, and a
+    sleeping drive returns an error rather than being spun up.
+
+    This is the same source the TrueNAS dashboard uses from 25.10 onwards.
+    """
+    temperatures = {}
+
+    for name_file in sorted(glob.glob(os.path.join(HWMON_ROOT, "hwmon*", "name"))):
+        try:
+            with open(name_file) as f:
+                if f.read().strip() != "drivetemp":
+                    continue
+        except OSError:
+            continue
+
+        hwmon = os.path.dirname(name_file)
+
+        # The hwmon device hangs off the SCSI device, which owns the block
+        # device: .../hwmonN/device/block/sdX
+        block = glob.glob(os.path.join(hwmon, "device", "block", "*"))
+        if not block:
+            continue
+        device = os.path.basename(block[0])
+
+        try:
+            with open(os.path.join(hwmon, "temp1_input")) as f:
+                millidegrees = int(f.read().strip())
+        except (OSError, ValueError):
+            # Typically a spun-down drive: the driver declines to wake it.
+            logging.debug("%s: drivetemp gave no reading", device)
+            continue
+
+        temperatures[device] = millidegrees // 1000
+
+    return temperatures
 
 
 def _messages(data):
@@ -239,6 +284,9 @@ class Smart:
         self.device_temperatures = {}
         self.smart_workers = 24
         self.smartctl_timeout = 30
+        # 'auto' prefers the drivetemp kernel module and falls back to
+        # smartctl; 'drivetemp' or 'smartctl' pin one source.
+        self.source = "auto"
         self.smartctl = shutil.which("smartctl") or SMARTCTL_FALLBACK
         # Per-device flag, set when smartctl says the drive was skipped
         # because it was spun down. Written by worker threads, each under
@@ -420,6 +468,24 @@ class Smart:
         devices = sorted(self.block_devices)
         if not devices:
             raise SmartReadError("No block devices to poll")
+
+        if self.source in ("auto", "drivetemp"):
+            readings = {
+                d: t for d, t in drivetemp_temperatures().items() if d in self.block_devices
+            }
+            if readings:
+                for device, temperature in sorted(readings.items()):
+                    logging.debug("%s: %s°C (drivetemp)", device, temperature)
+                self.device_temperatures = readings
+                self.highest_temperature = max(readings.values())
+                return self.highest_temperature
+
+            if self.source == "drivetemp":
+                raise SmartReadError(
+                    "source=drivetemp but the drivetemp module reported no "
+                    "drives. Load it with: modprobe drivetemp"
+                )
+            logging.debug("drivetemp gave nothing, falling back to smartctl")
 
         self._standby = {}
         workers = max(1, min(int(self.smart_workers), len(devices)))

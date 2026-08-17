@@ -204,24 +204,46 @@ in the install directory, so it normally persists.
 A venv still works if your build does have `ensurepip`; the launcher prefers
 `venv/bin/python3` when present. But `lib/` is the simpler path on SCALE.
 
-**7. Check SMART is enabled on the drives.**
+**7. Check the temperature source works.**
 
-Temperatures come from SMART, and a drive can support SMART while having it
-switched off, in which case smartctl refuses to read anything:
+By default (`source = auto`) temperatures come from the `drivetemp` kernel
+module, which reads over ATA SCT Command Transport. That works even on drives
+with SMART switched off, costs no subprocesses, and will not spin up a sleeping
+drive. It is what the TrueNAS dashboard itself uses from 25.10 onwards.
+
+```sh
+grep -l drivetemp /sys/class/hwmon/hwmon*/name | wc -l    # should match your drive count
+```
+
+If that returns 0, load the module:
+
+```sh
+sudo modprobe drivetemp
+```
+
+To make it persistent, add `modprobe drivetemp` as a Post Init **Command**
+entry alongside the IPMI one from step 3, or:
+
+```sh
+echo drivetemp | sudo tee /etc/modules-load.d/drivetemp.conf
+```
+
+The `/etc/modules-load.d` route lives on the OS dataset and is lost on a SCALE
+update, so the Post Init entry is the more durable of the two.
+
+*Falling back to smartctl.* With `source = smartctl`, each drive needs SMART
+enabled or smartctl refuses to read anything:
 
 ```sh
 sudo smartctl -i /dev/sdb | grep 'SMART support is'
-```
-
-If it says `Disabled`, turn it on for each data drive. The setting is stored on
-the drive and persists across reboots:
-
-```sh
 for d in /dev/sd?; do sudo smartctl -s on "$d"; done
 ```
 
-Also enable S.M.A.R.T. for the disks in the TrueNAS UI (Storage → Disks) so it
-is managed there too.
+`smartctl -s on` issues the ATA SMART ENABLE OPERATIONS command. It changes a
+setting on the drive, touches no data, and is safe to run on drives in a live
+pool. Note that TrueNAS 25.10 removed the SMART UI entirely, so there is no
+longer a per-disk checkbox, and some drives do not retain the setting across a
+power cycle — another reason to prefer `drivetemp`.
 
 **8. Test before letting it drive the fans.**
 
