@@ -35,7 +35,7 @@ if os.path.isdir(_LIB_DIR) and _LIB_DIR not in sys.path:
 from log_config import *
 from mqtt_handler import setup_mqtt, publish_discovery, publish_readings
 from fan_curve import FanCurve
-from disk_temps import Smart, SmartReadError
+from disk_temps import Smart, SmartReadError, AllDrivesStandby
 from cpu_temp import get_cpu_temperature
 
 
@@ -420,12 +420,18 @@ def main(args):
             try:
                 highest_temperature = temp_source.get_highest_temperature()
             except SmartReadError as e:
-                # No drive could be read at all. Treating that as 0C would
+                # No drive produced a temperature. Treating that as 0C would
                 # wind the fans down while the drives cook, so hold the
-                # current PWM and try again next cycle.
-                logging.error("%s. Holding PWM at %s", e, chassis.get_pwm())
+                # current PWM and try again next cycle. Every drive being
+                # spun down is normal on an idle system; anything else is a
+                # fault worth shouting about.
+                standby = isinstance(e, AllDrivesStandby)
+                logging.log(
+                    logging.INFO if standby else logging.ERROR,
+                    "%s. Holding PWM at %s", e, chassis.get_pwm(),
+                )
                 if args.once:
-                    return 1
+                    return 0 if standby else 1
                 time.sleep(polling_interval)
                 continue
 

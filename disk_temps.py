@@ -22,8 +22,14 @@ SMARTCTL_FALLBACK = "/usr/sbin/smartctl"
 
 
 class SmartReadError(Exception):
-    """Raised when no drive could be read at all, as opposed to all
-    drives being asleep. The caller must not interpret this as 'cool'."""
+    """Raised when no drive temperature could be obtained. The caller
+    must not interpret this as 'cool' and wind the fans down."""
+
+
+class AllDrivesStandby(SmartReadError):
+    """Every drive is spun down, so none reported a temperature. Normal
+    on an idle system, and not an error, but still no basis for a control
+    decision."""
 
 
 class Smart:
@@ -161,16 +167,24 @@ class Smart:
             logging.debug("%s: %s°C", device, temperature)
             temperatures[device] = temperature
 
-        if not temperatures and errors:
-            raise SmartReadError(
-                "Could not read any drive: %s (%d device(s) failed)"
-                % (errors[0], len(errors))
+        if not temperatures:
+            # No reading from anything. Returning 0 here would look like
+            # "everything is cold" and wind the fans down, so refuse to
+            # produce a number at all and let the caller hold its output.
+            if errors:
+                raise SmartReadError(
+                    "Could not read any drive: %s (%d device(s) failed)"
+                    % (errors[0], len(errors))
+                )
+            raise AllDrivesStandby(
+                "All %d drive(s) are in standby, no temperature available"
+                % len(devices)
             )
 
         for error in errors:
             logging.error("SMART read failed: %s", error)
 
         self.device_temperatures = temperatures
-        self.highest_temperature = max(temperatures.values()) if temperatures else 0
+        self.highest_temperature = max(temperatures.values())
 
         return self.highest_temperature
