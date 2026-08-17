@@ -20,6 +20,77 @@ from concurrent.futures import ThreadPoolExecutor
 SYS_BLOCK = "/sys/block"
 SMARTCTL_FALLBACK = "/usr/sbin/smartctl"
 
+# ATA SMART attribute ids that carry a temperature, in order of preference.
+TEMPERATURE_ATTRIBUTES = (194, 190)
+
+
+def _attribute_temperature(data):
+    """
+    Pull a temperature out of the ATA SMART attribute table.
+
+    The raw value of attribute 194 often packs extra fields alongside the
+    reading (lifetime min/max, for instance), so the leading integer of
+    the formatted string is used where possible and the low byte of the
+    raw value only as a fallback.
+    """
+    table = data.get("ata_smart_attributes", {}).get("table", [])
+    by_id = {a.get("id"): a for a in table if isinstance(a, dict)}
+
+    for attribute_id in TEMPERATURE_ATTRIBUTES:
+        attribute = by_id.get(attribute_id)
+        if not attribute:
+            continue
+        raw = attribute.get("raw", {})
+
+        text = str(raw.get("string", "")).strip()
+        if text:
+            head = text.split()[0]
+            if head.isdigit():
+                return int(head)
+
+        value = raw.get("value")
+        if isinstance(value, int):
+            return value & 0xFF
+
+    return None
+
+
+def extract_temperature(data):
+    """
+    Return the current temperature in Celsius from smartctl JSON, or None.
+
+    smartctl reports temperature in a different place for each device
+    class, and the top-level 'temperature' block is only emitted when the
+    info/health section is requested, so every known location is tried.
+    """
+    if not isinstance(data, dict):
+        return None
+
+    # Preferred: the unified field, present for ATA, SCSI and NVMe alike.
+    current = data.get("temperature", {}).get("current")
+    if isinstance(current, int):
+        return current
+
+    # ATA drives, straight from the attribute table.
+    from_attributes = _attribute_temperature(data)
+    if from_attributes is not None:
+        return from_attributes
+
+    # NVMe health log, already in Celsius.
+    nvme = data.get("nvme_smart_health_information_log", {}).get("temperature")
+    if isinstance(nvme, int):
+        return nvme
+
+    # SAS/SCSI environmental reporting.
+    reports = data.get("scsi_environmental_reports", {})
+    for key in sorted(reports):
+        if key.startswith("temperature"):
+            value = reports[key]
+            if isinstance(value, dict) and isinstance(value.get("current"), int):
+                return value["current"]
+
+    return None
+
 
 class SmartReadError(Exception):
     """Raised when no drive temperature could be obtained. The caller
@@ -104,9 +175,12 @@ class Smart:
         """
         path = "/dev/" + device
 
+        # -x rather than -A: the top-level 'temperature' block comes from
+        # the info/health section, which -A alone does not emit, and -x is
+        # the only form that covers ATA, SAS and NVMe uniformly.
         try:
             child = subprocess.run(
-                [self.smartctl, "-j", "-A", "-n", "standby", path],
+                [self.smartctl, "-j", "-x", "-n", "standby", path],
                 capture_output=True,
                 timeout=self.smartctl_timeout,
             )
@@ -124,9 +198,18 @@ class Smart:
         except (ValueError, UnicodeDecodeError) as e:
             raise SmartReadError("Could not parse smartctl output for %s: %s" % (path, e))
 
-        temperature = data.get("temperature", {}).get("current")
+        temperature = extract_temperature(data)
         if temperature is None:
-            logging.debug("%s: no temperature reported (standby?)", device)
+            # Distinguish a drive that is genuinely asleep from one that
+            # simply does not report a temperature anywhere we looked;
+            # the second is a problem, the first is not.
+            if child.returncode & 2:
+                logging.debug("%s: in standby, not woken to read it", device)
+            else:
+                logging.warning(
+                    "%s: awake but reported no temperature in any known field",
+                    device,
+                )
             return None
 
         return int(temperature)
