@@ -55,6 +55,27 @@ def _attribute_temperature(data):
     return None
 
 
+def _messages(data):
+    """smartctl's own diagnostics, as a list of plain strings."""
+    out = []
+    for message in data.get("smartctl", {}).get("messages", []):
+        if isinstance(message, dict) and message.get("string"):
+            out.append(str(message["string"]).strip())
+        elif isinstance(message, str):
+            out.append(message.strip())
+    return out
+
+
+def _is_standby(messages):
+    """
+    True when smartctl skipped the drive because it was spun down.
+    Exit status alone cannot be used: bit 1 covers both the low-power
+    skip and a failure to open the device.
+    """
+    joined = " ".join(messages).upper()
+    return "STANDBY" in joined or "SLEEP" in joined or "LOW POWER" in joined
+
+
 def extract_temperature(data):
     """
     Return the current temperature in Celsius from smartctl JSON, or None.
@@ -121,6 +142,10 @@ class Smart:
         self.smart_workers = 24
         self.smartctl_timeout = 30
         self.smartctl = shutil.which("smartctl") or SMARTCTL_FALLBACK
+        # Per-device flag, set when smartctl says the drive was skipped
+        # because it was spun down. Written by worker threads, each under
+        # its own key, and read after they have all finished.
+        self._standby = {}
 
     def _boot_devices(self):
         """
@@ -200,15 +225,20 @@ class Smart:
 
         temperature = extract_temperature(data)
         if temperature is None:
-            # Distinguish a drive that is genuinely asleep from one that
-            # simply does not report a temperature anywhere we looked;
-            # the second is a problem, the first is not.
-            if child.returncode & 2:
+            # smartctl reports why in the JSON itself. Exit status bit 1 is
+            # ambiguous (it means both "skipped, low power" and "device open
+            # failed"), so the messages are what actually tell them apart.
+            messages = _messages(data)
+            if _is_standby(messages):
+                self._standby[device] = True
                 logging.debug("%s: in standby, not woken to read it", device)
             else:
                 logging.warning(
-                    "%s: awake but reported no temperature in any known field",
+                    "%s: no temperature reported. smartctl exit %s%s",
                     device,
+                    child.returncode,
+                    (": " + "; ".join(messages)) if messages else
+                    " and no message; run: smartctl -x /dev/" + device,
                 )
             return None
 
@@ -217,9 +247,10 @@ class Smart:
     def _read_device(self, device):
         """Wrapper for the worker pool: never raises, reports the error."""
         try:
-            return self.get_temperature(device), None
+            temperature = self.get_temperature(device)
+            return temperature, None, self._standby.get(device, False)
         except SmartReadError as e:
-            return None, e
+            return None, e, False
 
     def get_highest_temperature(self):
         """
@@ -235,17 +266,20 @@ class Smart:
         if not devices:
             raise SmartReadError("No block devices to poll")
 
+        self._standby = {}
         workers = max(1, min(int(self.smart_workers), len(devices)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             results = list(pool.map(self._read_device, devices))
 
         temperatures = {}
         errors = []
-        for device, (temperature, error) in zip(devices, results):
+        standby = 0
+        for device, (temperature, error, was_standby) in zip(devices, results):
             if error is not None:
                 errors.append(error)
                 continue
             if temperature is None:
+                standby += was_standby
                 continue
             logging.debug("%s: %s°C", device, temperature)
             temperatures[device] = temperature
@@ -259,9 +293,14 @@ class Smart:
                     "Could not read any drive: %s (%d device(s) failed)"
                     % (errors[0], len(errors))
                 )
-            raise AllDrivesStandby(
-                "All %d drive(s) are in standby, no temperature available"
-                % len(devices)
+            if standby == len(devices):
+                raise AllDrivesStandby(
+                    "All %d drive(s) are in standby, no temperature available"
+                    % len(devices)
+                )
+            raise SmartReadError(
+                "No temperature from any of %d drive(s) (%d in standby). "
+                "See the per-drive warnings above" % (len(devices), standby)
             )
 
         for error in errors:
