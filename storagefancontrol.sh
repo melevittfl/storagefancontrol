@@ -41,10 +41,22 @@ STARTUP_LOG="$DIR/startup.log"
 # setsid detaches from the Post Init session so the daemon is not killed
 # when this script returns. It is part of util-linux and present on SCALE;
 # fall back to plain nohup if it is ever missing.
+# stdin is closed as well as stdout/stderr redirected, so nothing keeps a
+# handle on the terminal that started us.
 if command -v setsid >/dev/null 2>&1; then
-    setsid nohup "$PYTHON" "$DIR/storagefancontrol.py" >>"$STARTUP_LOG" 2>&1 &
+    setsid nohup "$PYTHON" "$DIR/storagefancontrol.py" >>"$STARTUP_LOG" 2>&1 </dev/null &
 else
-    nohup "$PYTHON" "$DIR/storagefancontrol.py" >>"$STARTUP_LOG" 2>&1 &
+    nohup "$PYTHON" "$DIR/storagefancontrol.py" >>"$STARTUP_LOG" 2>&1 </dev/null &
 fi
 
-exit 0
+# Confirm it actually stayed up, rather than reporting success for a
+# process that exited a moment later.
+sleep 2
+if [ -f "$DIR/storagefancontrol.pid" ] &&
+   kill -0 "$(cat "$DIR/storagefancontrol.pid")" 2>/dev/null; then
+    echo "storagefancontrol: running as pid $(cat "$DIR/storagefancontrol.pid")"
+    exit 0
+fi
+
+echo "storagefancontrol: did not stay running; see $DIR/fan_control.log and $STARTUP_LOG" >&2
+exit 1

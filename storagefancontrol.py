@@ -398,7 +398,21 @@ def main(args):
         chassis.set_pwm(chassis.pwm_safety)
 
     atexit.register(set_safety_speed)
-    signal.signal(signal.SIGTERM, lambda sig, frame: sys.exit(0))
+
+    def _terminate(sig, frame):
+        # Which signal, and from where, is the difference between "someone
+        # stopped it" and "the session it was started from took it down".
+        logging.warning(
+            "%s received (pid %s, ppid %s, sid %s), shutting down",
+            signal.Signals(sig).name,
+            os.getpid(),
+            os.getppid(),
+            os.getsid(0),
+        )
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _terminate)
+    signal.signal(signal.SIGINT, _terminate)
     signal.signal(signal.SIGHUP, _sighup_handler)
 
     controller = get_controller(config)
@@ -452,8 +466,13 @@ def main(args):
 
             time.sleep(polling_interval)
 
-    except (KeyboardInterrupt, SystemExit):
+    except KeyboardInterrupt:
+        logging.warning("Interrupted, shutting down")
+    except SystemExit:
         pass
+    except Exception:
+        logging.exception("Unhandled error, shutting down")
+        return 1
 
     return 0
 
