@@ -3,7 +3,13 @@
 polling_interval = 30
 
 # Temperature in Celcius. Used by the PID controller only.
-target_temperature = 37
+#
+# Set this above what the drives actually reach at full fan speed. If the
+# target is unreachable the error never returns to zero, the integrator
+# winds up to I_max and the fans sit at 100% indefinitely. Large-scale
+# studies (Google, 100k drives) put the lowest failure rates at 37-46C, so
+# there is nothing to gain from chasing a lower number.
+target_temperature = 40
 
 # Fan speed controller: 'pid' or 'curve'.
 # pid:   Feedback controller that targets `target_temperature`.
@@ -71,9 +77,15 @@ cpu_temp_max = 80
 # point and above the highest, fan speed is clamped to that
 # endpoint's value.
 #
-# Example: quiet below 37C, ramps noticeably between 37-38C,
-# very aggressively between 38-39C, and pinned at maximum from 39C.
-curve = 34:20, 37:35, 38:60, 39:100
+# Keep the steps small around the temperature the drives normally sit at.
+# A curve that jumps 25 points for one degree, right where the drives
+# idle, makes the fans audibly cycle up and down as the reading crosses
+# the boundary. Save the steep part for temperatures that mean something
+# is actually wrong.
+#
+# Below: gentle through the normal 37-39C band, firmer approaching 41C,
+# and full speed by 44C.
+curve = 34:20, 37:30, 39:45, 41:70, 44:100
 
 [Smart]
 # Where drive temperatures come from.
