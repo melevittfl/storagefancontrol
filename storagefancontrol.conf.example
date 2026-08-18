@@ -88,6 +88,13 @@ curve = 34:20, 37:35, 38:60, 39:100
 #           ('smartctl -s on /dev/sdX').
 source = auto
 
+# Skip removable-medium devices. The BMC presents virtual floppy, CD and
+# USB disks over the IPMI console, and they appear as ordinary sd* devices
+# with no media and no temperature. They are not chassis drives, so they
+# must not be monitored or advertised over MQTT. Set to false only if you
+# genuinely want a removable device included.
+exclude_removable = true
+
 # Drives are discovered from /sys/block. Only devices whose name starts
 # with device_filter are monitored. On Linux/TrueNAS SCALE, SATA and SAS
 # drives are 'sd' (sda, sdb, ...); NVMe drives are 'nvme'.

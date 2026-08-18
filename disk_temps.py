@@ -170,6 +170,15 @@ def extract_temperature(data):
     return None
 
 
+def _read_int(path):
+    """Read a small integer out of sysfs, or None if unreadable."""
+    try:
+        with open(path) as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
 def parent_device(name):
     """
     Map a partition to the whole disk it lives on, via sysfs.
@@ -287,6 +296,9 @@ class Smart:
         # 'auto' prefers the drivetemp kernel module and falls back to
         # smartctl; 'drivetemp' or 'smartctl' pin one source.
         self.source = "auto"
+        # Skip removable-medium devices: BMC virtual media and card
+        # readers are not chassis drives.
+        self.exclude_removable = True
         # Drives drivetemp cannot see, remembered so the warning is not
         # repeated every polling cycle.
         self._warned_uncovered = set()
@@ -348,6 +360,40 @@ class Smart:
 
         return excluded
 
+    def _is_real_drive(self, name):
+        """
+        Decide whether a /sys/block entry is a drive worth monitoring.
+
+        Returns (keep, reason); reason is None for entries not worth
+        mentioning, and a short explanation for anything deliberately
+        skipped, so an unexpected exclusion is visible in the log.
+        """
+        base = os.path.join(SYS_BLOCK, name)
+
+        # No 'device' symlink means a virtual block device: loop, zram,
+        # md, dm, or a ZFS zvol. Not worth reporting individually.
+        if not os.path.exists(os.path.join(base, "device")):
+            return False, None
+
+        if name.startswith("sr"):
+            return False, "optical drive"
+
+        # Size is in 512-byte sectors. Zero means no medium is present,
+        # which is how an idle BMC virtual floppy or virtual USB disk
+        # presents itself. Those are not storage and never report a
+        # temperature.
+        size = _read_int(os.path.join(base, "size"))
+        if size == 0:
+            return False, "no media"
+
+        # Removable-medium devices are BMC virtual media, card readers and
+        # the like rather than chassis drives, and stay excluded even once
+        # an image is mounted and the size becomes non-zero.
+        if self.exclude_removable and _read_int(os.path.join(base, "removable")) == 1:
+            return False, "removable media"
+
+        return True, None
+
     def get_block_devices(self):
         """
         Enumerate real block devices from /sys/block.
@@ -363,12 +409,16 @@ class Smart:
             raise SystemExit(1)
 
         devices = set()
+        skipped = []
         for name in entries:
-            if name.startswith("sr"):
-                continue
-            if not os.path.exists(os.path.join(SYS_BLOCK, name, "device")):
-                continue
-            devices.add(name)
+            keep, reason = self._is_real_drive(name)
+            if keep:
+                devices.add(name)
+            elif reason:
+                skipped.append("%s (%s)" % (name, reason))
+
+        if skipped:
+            logging.debug("Not storage: %s", ", ".join(sorted(skipped)))
 
         excluded = self._boot_devices(devices)
         if excluded & devices:
