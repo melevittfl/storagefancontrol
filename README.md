@@ -1,6 +1,6 @@
 storagefancontrol 
 =================
-Fan speed PID controller based on hard drive temperature
+Fan speed controller based on hard drive temperature
 --------------------------------------------------------
 
 This project was forked from a fan control script built for Linux. It runs on
@@ -36,9 +36,17 @@ ipmitool raw 0x3a 0x01 0x64 0x00 0x64 0x00 0x64 0x64 0x00 0x00
 
 This script has been updated to handle multiple PWM devices.
 
-Fan control is coverned by the control loop feedback mechanism [PID][pid].
-Here is a [nice intro][video01] on PID. By using PID, the script always finds
-the optimal fan speed no matter what the circumstances are.
+Two controllers are available, selected with `controller` in the config.
+
+The default is a **fan curve**: a piecewise-linear map from the hottest drive
+temperature to a fan speed. It is predictable and asymmetric — quiet while the
+drives are cool, ramping hard only as they approach a limit you choose — and it
+cannot run away, because the output depends only on the current temperature.
+
+The alternative is a [PID][pid] control loop ([nice intro][video01]) targeting a
+set temperature. It adapts to changing ambient conditions, but if the target is
+set below what the drives actually reach at full fan speed, the integrator
+saturates and the fans sit at 100% indefinitely.
 
 [video01]: https://www.youtube.com/watch?v=UR0hOmjaHp0
 [pid]: http://en.wikipedia.org/wiki/PID_controller  
@@ -47,9 +55,11 @@ For example, if you have 24 drives in a chassis, this script checks the temperat
 of each drive. The temperature of the hottest drive is used to determine if the 
 chassis fans need to run faster, slower or if they should stay at the same speed.
 
-the PID controller makes sure that an optimal fan speed is found to keep the
-system at a maximum of - in my case - 40C. The target temp is 
-configurable.
+Both controllers are configurable, so the temperature the drives settle at is
+yours to choose. Worth knowing when picking it: the largest published study of
+drive failures (Google, ~100,000 drives) found the lowest failure rates between
+37C and 46C, with drives running below 27C failing more often than those at 50C.
+Targeting a very low temperature costs fan noise without buying reliability.
 
 The script logs internal variables to a log file by default.
 
@@ -157,7 +167,8 @@ Then edit it:
 - `boot_device` — leave at `auto` to detect the boot pool's drives and exclude
   them. Override with `/dev/disk/by-id` names, comma separated for a mirrored
   boot pool.
-- PID/PWM values and, if you prefer a fan curve to a PID loop, `controller = curve`.
+- `controller` — `curve` (default) or `pid`, plus the `[FanCurve]` points or
+  `[Pid]` gains for whichever you pick.
 - `[MQTT]` if you want Home Assistant integration.
 
 `storagefancontrol.conf` is not tracked by git, so `git pull` will not overwrite

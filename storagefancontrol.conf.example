@@ -11,14 +11,19 @@ polling_interval = 30
 # there is nothing to gain from chasing a lower number.
 target_temperature = 40
 
-# Fan speed controller: 'pid' or 'curve'.
-# pid:   Feedback controller that targets `target_temperature`.
-#        Adapts to ambient conditions but can be noisy when tuned
-#        to keep temperatures well below a hard ceiling.
+# Fan speed controller: 'curve' or 'pid'.
 # curve: Piecewise-linear map from drive temperature to fan speed.
 #        Predictable and asymmetric — quiet when cool, aggressive
-#        only as drives approach the upper limit. See [FanCurve].
-controller = pid
+#        only as drives approach the upper limit. Cannot wind itself
+#        up to full speed chasing a target it can never reach. This is
+#        the default. See [FanCurve].
+# pid:   Feedback controller that targets `target_temperature`.
+#        Adapts to ambient conditions, but if the target is below what
+#        the drives actually reach the integrator saturates and the
+#        fans stay at 100%. See target_temperature above.
+#
+# Changing this needs a restart, not a SIGHUP.
+controller = curve
 
 [Pid]
 # The values in this section are tuned for the author's system.
