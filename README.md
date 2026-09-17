@@ -347,3 +347,26 @@ and simply report no temperature. If *no* drive can be read at all — smartctl
 missing, for instance — the script holds the current fan speed and logs an error
 rather than treating the absence of readings as "cold" and winding the fans down.
 
+
+
+TESTS
+-----
+
+```sh
+python3 -m unittest test_mqtt_handler -v
+```
+
+Standard library only, with a stub in place of paho-mqtt, so it runs on the NAS
+as well as on a workstation and needs nothing installed.
+
+The stub reproduces the two paho behaviours that have caused real faults here.
+A publish made before the broker's CONNACK arrives is *dropped*, not queued, so
+discovery published straight after `connect()` never reached Home Assistant and
+the entities never appeared, while the readings that followed a second later
+published fine. And `connect()` resolves the broker's name on the calling
+thread, so a NAS that booted before DNS was up raised `Temporary failure in
+name resolution` and ran the rest of the week with MQTT silently dead.
+
+Both are now pinned by tests: the stub's `connect()` raises `EAI_NONAME`, so
+going back to a synchronous connect fails the suite, and discovery is asserted
+to publish only from `on_connect`.

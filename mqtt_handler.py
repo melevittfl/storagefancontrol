@@ -54,8 +54,12 @@ def _publish(client, topic, payload, retain=False, qos=0):
 
 def setup_mqtt(config, get_devices):
     """
-    Connect to MQTT broker and return the client, or None if disabled or
-    the connection fails.
+    Start connecting to the MQTT broker and return the client, or None if
+    MQTT is disabled or unusable.
+
+    The connection is made asynchronously, so a client comes back before
+    the broker has answered and possibly before its name has even been
+    resolved. Nothing is published until on_connect fires.
 
     `get_devices` is called to get the set of drives to advertise. It is a
     callable rather than a set because a SIGHUP reload rebuilds the set,
@@ -125,17 +129,55 @@ def setup_mqtt(config, get_devices):
     else:
         logging.info("No MQTT username set, connecting anonymously")
 
+    # Retry from one second out to two minutes between attempts, rather
+    # than hammering a broker that is down.
+    client.reconnect_delay_set(min_delay=1, max_delay=120)
+
+    attempts = [0]
+
+    def on_pre_connect(*_):
+        attempts[0] += 1
+        if attempts[0] > 1:
+            logging.info(
+                "MQTT connection attempt %d to %s:%s", attempts[0], broker, port
+            )
+
+    # on_pre_connect arrived in paho 1.5. Without it the retries are silent,
+    # which is survivable, so it is used only when present.
+    if hasattr(client, "on_pre_connect"):
+        client.on_pre_connect = on_pre_connect
+
     try:
-        # This completes the TCP connection but not the MQTT handshake: the
-        # broker's accept or refuse arrives later as a CONNACK, which is why
-        # the result is reported from on_connect rather than here. Without
-        # that callback a rejected password looks exactly like success.
-        client.connect(broker, port, keepalive=60)
+        # connect_async rather than connect: it resolves the broker's name
+        # on the network thread instead of here, so it cannot fail at this
+        # point. That matters at boot, where this daemon starts before DNS
+        # is up often enough that a synchronous connect would raise
+        # "Temporary failure in name resolution" and leave MQTT dead for
+        # the entire run. paho now retries in the background until the name
+        # resolves and the broker answers.
+        #
+        # Neither call completes the MQTT handshake: the broker's accept or
+        # refuse arrives later as a CONNACK, which is why the result is
+        # reported from on_connect rather than here. Without that callback
+        # a rejected password looks exactly like success.
+        client.connect_async(broker, port, keepalive=60)
         client.loop_start()
-        logging.info("MQTT connecting to %s:%s as %s", broker, port, username or "anonymous")
+        logging.info(
+            "MQTT connecting to %s:%s as %s. Retries happen in the background.",
+            broker,
+            port,
+            username or "anonymous",
+        )
         return client
     except Exception as e:
-        logging.error("Failed to reach MQTT broker at %s:%s: %s", broker, port, e)
+        # Reached only for a broker or port that is malformed rather than
+        # merely unreachable, which retrying would never fix.
+        logging.error(
+            "Cannot use MQTT broker address %s:%s: %s. Continuing without MQTT.",
+            broker,
+            port,
+            e,
+        )
         return None
 
 

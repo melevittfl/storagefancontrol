@@ -8,7 +8,8 @@ there is no pip to install a test runner or the real broker library with.
 
 The stub reproduces the two paho behaviours that caused real bugs here:
 a publish made before the connection is up is dropped rather than queued,
-so discovery published straight after connect() never reaches the broker.
+and connect() resolves the broker's name on the calling thread while
+connect_async() does not.
 """
 
 import configparser
@@ -40,10 +41,12 @@ class FakeClient:
     def __init__(self, *args, **kwargs):
         self.on_connect = None
         self.on_disconnect = None
+        self.on_pre_connect = None
         self.callback_api_version = args[0] if args else None
         self.connected = False
         self.loop_running = False
         self.credentials = None
+        self.delays = None
         self.connect_args = None
         self.published = []      # (topic, payload, qos, retain), in order
         self.connect_calls = 0
@@ -53,7 +56,15 @@ class FakeClient:
     def username_pw_set(self, username, password):
         self.credentials = (username, password)
 
+    def reconnect_delay_set(self, min_delay, max_delay):
+        self.delays = (min_delay, max_delay)
+
     def connect(self, host, port, keepalive=60):
+        # The synchronous call resolves DNS here, which is what failed at
+        # boot. Nothing in this module may call it any more.
+        raise OSError("[Errno -3] Temporary failure in name resolution")
+
+    def connect_async(self, host, port, keepalive=60):
         if not host:
             raise ValueError("Invalid host.")
         self.connect_args = (host, port, keepalive)
@@ -70,6 +81,9 @@ class FakeClient:
         return Result(0)
 
     # --- things the network thread would do ---------------------------
+    def fire_pre_connect(self):
+        self.on_pre_connect(self, None)
+
     def fire_connack(self, reason=0):
         self.connected = True
         if self.callback_api_version == "v2":
@@ -202,6 +216,46 @@ class TestDiscoveryTiming(MqttTestCase):
         client.fire_connack()
         self.assertIn(
             "homeassistant/sensor/truenas_temps_sdb/config", client.topics()
+        )
+
+
+class TestColdDns(MqttTestCase):
+    """
+    The NAS starts before DNS is up often enough that a synchronous
+    connect() would raise and leave MQTT dead for the whole run.
+    """
+
+    def test_setup_survives_a_name_that_does_not_resolve_yet(self):
+        # FakeClient.connect raises EAI_NONAME; connect_async does not.
+        client = self.mqtt_handler.setup_mqtt(make_config(), lambda: {"sda"})
+        self.assertIsNotNone(client)
+        self.assertTrue(client.loop_running)
+
+    def test_retry_backoff_is_bounded(self):
+        client = self.mqtt_handler.setup_mqtt(make_config(), lambda: {"sda"})
+        self.assertEqual(client.delays, (1, 120))
+
+    def test_retries_are_logged_after_the_first_attempt(self):
+        logging.disable(logging.NOTSET)
+        client = self.mqtt_handler.setup_mqtt(make_config(), lambda: {"sda"})
+        with self.assertLogs(level="INFO") as captured:
+            client.fire_pre_connect()   # first attempt, not worth a line
+            client.fire_pre_connect()   # a retry, which is
+            logging.info("sentinel")
+        retries = [m for m in captured.output if "connection attempt" in m]
+        self.assertEqual(len(retries), 1)
+        self.assertIn("attempt 2", retries[0])
+
+    def test_an_unusable_address_is_not_retried(self):
+        """Retrying a malformed address would never come good."""
+        self.assertIsNone(
+            self.mqtt_handler.setup_mqtt(make_config(broker=""), lambda: {"sda"})
+        )
+
+    def test_connection_is_asynchronous(self):
+        client = self.mqtt_handler.setup_mqtt(make_config(), lambda: {"sda"})
+        self.assertEqual(
+            client.connect_args, ("homeassistant.example.com", 1883, 60)
         )
 
 
@@ -365,11 +419,6 @@ class TestSetupGuards(MqttTestCase):
         sys.modules["paho.mqtt.client"] = None
         self.assertIsNone(
             self.mqtt_handler.setup_mqtt(make_config(), lambda: set())
-        )
-
-    def test_an_unusable_address_returns_no_client(self):
-        self.assertIsNone(
-            self.mqtt_handler.setup_mqtt(make_config(broker=""), lambda: {"sda"})
         )
 
     def test_credentials_are_passed_to_the_broker(self):
