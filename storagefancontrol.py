@@ -33,7 +33,7 @@ if os.path.isdir(_LIB_DIR) and _LIB_DIR not in sys.path:
     sys.path.insert(0, _LIB_DIR)
 
 from log_config import *
-from mqtt_handler import setup_mqtt, publish_discovery, publish_readings
+from mqtt_handler import setup_mqtt, publish_readings
 from fan_curve import FanCurve
 from disk_temps import Smart, SmartReadError, AllDrivesStandby
 from cpu_temp import get_cpu_temperature
@@ -446,9 +446,11 @@ def main(args):
     controller = get_controller(config)
     temp_source = get_temp_source(config)
 
-    mqtt_client = setup_mqtt(config)
-    if mqtt_client:
-        publish_discovery(mqtt_client, config, temp_source.block_devices)
+    # Discovery is published by setup_mqtt from its on_connect callback, not
+    # here: publishing it at this point raced the CONNACK and the messages
+    # were silently dropped. A callable is passed because a SIGHUP reload
+    # rebuilds block_devices as a new set.
+    mqtt_client = setup_mqtt(config, lambda: temp_source.block_devices)
 
     # Set the fan to the chassis min on startup.
     chassis.set_pwm(chassis.pwm_min)
