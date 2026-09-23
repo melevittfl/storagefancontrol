@@ -28,7 +28,7 @@ however your motherboard controls fan speed.
 
 Two controllers are available, selected with `controller` in the config.
 
-The default is a **fan curve**: a piecewise-linear map from the hottest drive
+The default is a fan curve that gives you a linear map from the hottest drive
 temperature to a fan speed. 
 
 The alternative is a PID control loop targeting a set temperature. It adapts to changing ambient conditions, but if the target is
