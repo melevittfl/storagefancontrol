@@ -3,15 +3,6 @@ storagefancontrol
 Fan speed controller based on hard drive temperature
 --------------------------------------------------------
 
-This project was forked from a fan control script built for Linux. It runs on
-TrueNAS SCALE using an ASRock Rack motherboard (specifically the E3C236D4U.
-Other models may differ).
-
-Earlier versions targeted FreeNAS 11 / TrueNAS Core (FreeBSD). The script is now
-Linux-only: drives are discovered from `/sys/block`, temperatures come from
-`smartctl --json`, and CPU temperature is read from hwmon sysfs. The `ipmitool`
-raw command is unchanged, as it is a property of the BMC rather than the OS.
-
 This script is meant for storage servers with lots of (spinning) hard drives.
 It regulates the chassis (PWM) fan speed based on the hard drive temperature. 
 
@@ -32,79 +23,41 @@ ipmitool raw 0x3a 0x01 0x64 0x00 0x64 0x00 0x64 0x64 0x00 0x00
 0x01 is Min
 0x64 is Max
 ```
-
-
-This script has been updated to handle multiple PWM devices.
+If you're not running this on the same hardware, you'll need to modify the script for 
+however your motherboard controls fan speed.
 
 Two controllers are available, selected with `controller` in the config.
 
 The default is a **fan curve**: a piecewise-linear map from the hottest drive
-temperature to a fan speed. It is predictable and asymmetric — quiet while the
-drives are cool, ramping hard only as they approach a limit you choose — and it
-cannot run away, because the output depends only on the current temperature.
+temperature to a fan speed. 
 
-The alternative is a [PID][pid] control loop ([nice intro][video01]) targeting a
-set temperature. It adapts to changing ambient conditions, but if the target is
+The alternative is a PID control loop targeting a set temperature. It adapts to changing ambient conditions, but if the target is
 set below what the drives actually reach at full fan speed, the integrator
-saturates and the fans sit at 100% indefinitely.
+saturates and the fans sit at 100% indefinitely. 
 
-[video01]: https://www.youtube.com/watch?v=UR0hOmjaHp0
-[pid]: http://en.wikipedia.org/wiki/PID_controller  
-
-For example, if you have 24 drives in a chassis, this script checks the temperature
-of each drive. The temperature of the hottest drive is used to determine if the 
+The temperature of the hottest drive is used to determine if the 
 chassis fans need to run faster, slower or if they should stay at the same speed.
 
 Both controllers are configurable, so the temperature the drives settle at is
-yours to choose. Worth knowing when picking it: the largest published study of
-drive failures (Google, ~100,000 drives) found the lowest failure rates between
-37C and 46C, with drives running below 27C failing more often than those at 50C.
-Targeting a very low temperature costs fan noise without buying reliability.
-
-The script logs internal variables to a log file by default.
-
-    Temp: 40 | FAN: 51% | PWM: 130 | P=0   | I=51  | D=0   | Err=0  |
-    Temp: 40 | FAN: 51% | PWM: 130 | P=0   | I=51  | D=0   | Err=0  |
-    Temp: 40 | FAN: 51% | PWM: 130 | P=0   | I=51  | D=0   | Err=0  |
-    Temp: 40 | FAN: 51% | PWM: 130 | P=0   | I=51  | D=0   | Err=0  |
-    Temp: 39 | FAN: 43% | PWM: 109 | P=-2  | I=50  | D=-5  | Err=-1 |
-    Temp: 39 | FAN: 47% | PWM: 119 | P=-2  | I=49  | D=0   | Err=-1 |
-    Temp: 40 | FAN: 54% | PWM: 137 | P=0   | I=49  | D=5   | Err=0  |
-    Temp: 40 | FAN: 49% | PWM: 124 | P=0   | I=49  | D=0   | Err=0  |
-    Temp: 40 | FAN: 49% | PWM: 124 | P=0   | I=49  | D=0   | Err=0  |
-    Temp: 40 | FAN: 49% | PWM: 124 | P=0   | I=49  | D=0   | Err=0  |
-
+yours to choose. 
 
 The disk temperature is read through 'smartctl' (part of smartmontools).
 
-
 The script performs a poll every 30 seconds by default. 
-
 
 Forked From: https://github.com/louwrentius/storagefancontrol
 
 INSTALL (TrueNAS SCALE)
 -----------------------
 
-Everything lives in one directory: the script, its config, its log, its lock and
-pid file. Nothing is written outside it, so it can be installed anywhere root can
-read, including a home directory. The only absolute paths it uses are the kernel
-interfaces it reads (`/sys/block`, `/sys/class/hwmon`) and the `smartctl` and
-`ipmitool` binaries, which are located with `which` at startup.
+Everything lives in one directory and nothing is written outside it, so it can be installed anywhere root can
+read, including a home directory. It needs to be located somewhere it won't get overwritten by a TrueNAS update. 
 
 **1. Pick a location that survives a SCALE update.**
 
-Check where your home directory actually is:
-
-```sh
-getent passwd "$(whoami)"      # last-but-one field is the home directory
-```
-
 - **`/mnt/<pool>/...`** — on a data pool. Persists. Use this.
 - **`/home/<user>`** — on the boot pool. This is the OS dataset, and a major
-  update or reinstall can wipe it. Either move the user's home directory onto a
-  data pool in Credentials → Local Users, or install under `/mnt/<pool>/`
-  instead.
+  update or reinstall can wipe it. 
 
 If the pool is encrypted with a passphrase and not unlocked automatically, it
 will not be mounted when the Post Init script runs, and the daemon will not
@@ -148,6 +101,7 @@ lsblk -dno NAME,SIZE,MODEL     # all disks
 zpool status boot-pool         # which one(s) are the boot drives
 ```
 
+On my system, I only monitor spinning rust drives. My boot drive is an SSD that I exclude from the calculation. 
 You do not normally need to write the boot drive down: `boot_device = auto`
 asks the boot pool directly. Linux assigns `/dev/sd*` letters in discovery
 order, so the boot drive is not necessarily `sda` and can move between boots —
@@ -171,56 +125,23 @@ Then edit it:
   `[Pid]` gains for whichever you pick.
 - `[MQTT]` if you want Home Assistant integration.
 
-`storagefancontrol.conf` is not tracked by git, so `git pull` will not overwrite
-your settings. The example file is kept up to date with all available options.
+**6. Setup integration with Home Assistant (Optional).**
 
-**6. Install paho-mqtt, if using MQTT.**
-
-Only needed if you set `enabled = true` under `[MQTT]`. Without it the script
+Set `enabled = true` under `[MQTT]`. Without it the script
 runs normally and logs that it is skipping MQTT, so if you are not using Home
 Assistant you can skip this step entirely.
 
-Installing Python packages on SCALE is awkward: `apt` is disabled, `pip` refuses
-to install system-wide (PEP 668), and `python3 -m venv` usually fails with
-*"ensurepip is not available"* because SCALE ships Python without the
-`python3-venv` package. **Do not follow that error's advice to run
-`apt install python3.11-venv`** — apt is disabled, and anything installed into
-the OS dataset is wiped by the next update.
-
-Instead, vendor the dependency into a `lib/` directory beside the script. It is
-added to `sys.path` automatically at startup, needs no venv, and survives SCALE
-updates along with the rest of the directory.
-
-SCALE has no pip either, so use the bundled installer. It uses only the standard
-library, fetches the wheel from PyPI, verifies its sha256, unpacks it into `lib/`
-and checks that it imports:
+#### MQTT Dependencies Installation
 
 ```sh
 python3 install_deps.py            # or: python3 install_deps.py 2.1.0
 ```
 
-If the NAS has no outbound internet access, do it by hand instead — paho-mqtt is
-pure Python and a wheel is just a zip. Download the `py3-none-any.whl` from
-<https://pypi.org/project/paho-mqtt/#files> on another machine, copy it over, and:
-
-```sh
-mkdir -p lib && cd lib
-unzip -o ~/paho_mqtt-*.whl && rm -f paho_mqtt-*.whl && cd ..
-python3 -c 'import sys; sys.path.insert(0, "lib"); import paho.mqtt.client; print("ok")'
-```
-
-Re-run `install_deps.py` after a SCALE update only if you moved `lib/`; it lives
-in the install directory, so it normally persists.
-
-A venv still works if your build does have `ensurepip`; the launcher prefers
-`venv/bin/python3` when present. But `lib/` is the simpler path on SCALE.
 
 **7. Check the temperature source works.**
 
 By default (`source = auto`) temperatures come from the `drivetemp` kernel
-module, which reads over ATA SCT Command Transport. That works even on drives
-with SMART switched off, costs no subprocesses, and will not spin up a sleeping
-drive. It is what the TrueNAS dashboard itself uses from 25.10 onwards.
+module, which reads over ATA SCT Command Transport. 
 
 ```sh
 grep -l drivetemp /sys/class/hwmon/hwmon*/name | wc -l    # should match your drive count
@@ -256,25 +177,7 @@ pool. Note that TrueNAS 25.10 removed the SMART UI entirely, so there is no
 longer a per-disk checkbox, and some drives do not retain the setting across a
 power cycle — another reason to prefer `drivetemp`.
 
-**8. Test before letting it drive the fans.**
-
-```sh
-sudo ./storagefancontrol.py --once --dry-run   # calculates everything, changes nothing
-```
-
-Interactive runs mirror the log to the terminal; the daemon, having no tty,
-logs only to `fan_control.log`. Add `--quiet` to suppress the terminal copy.
-
-Check that every data drive is listed and the boot drive is not, that the
-temperatures look right, and that the logged `ipmitool` command is what you
-expect. Then run one real cycle and confirm the fans respond:
-
-```sh
-sudo ./storagefancontrol.py --once
-ipmitool sdr type fan
-```
-
-**9. Start it on boot.**
+**8. Start it on boot.**
 
 Go to System Settings → Advanced → Init/Shutdown Scripts, and add:
 
@@ -288,13 +191,7 @@ Go to System Settings → Advanced → Init/Shutdown Scripts, and add:
 be moved along with the rest of the directory.
 
 It starts the daemon with `systemd-run`, as a transient unit under
-`system.slice`. That matters for two reasons: the Post Init runner enforces a
-timeout and would otherwise kill the daemon along with the script, and a daemon
-left in the cgroup of the session that started it loses the ability to spawn
-processes when that session ends — `ipmitool` then fails with `ENOSYS` on every
-cycle while the daemon keeps running, leaving the fans stuck at their last
-setting. Being in its own unit also brings the usual controls:
-
+`system.slice`. 
 ```sh
 systemctl status storagefancontrol
 systemctl stop storagefancontrol
@@ -304,20 +201,6 @@ journalctl -u storagefancontrol
 The unit is transient, so it exists only while running and does not need
 installing or removing. `Restart=on-failure` restarts the daemon after 30s if it
 crashes. Where systemd is unavailable the launcher falls back to `setsid`.
-
-**10. Reboot and confirm.**
-
-Start it by hand with `sudo ./storagefancontrol.sh`. The daemon needs root for
-`/dev/ipmi0`, and its log, lock and pid files end up root-owned, so running the
-launcher unprivileged afterwards will not work. Post Init scripts already run as
-root, so this only affects manual starts.
-
-```sh
-cat storagefancontrol.pid          # should match a live process
-ps -p "$(cat storagefancontrol.pid)" -o pid,etime,cmd
-tail -20 fan_control.log           # fresh entries since boot
-cat startup.log                    # "Running as unit: ..." is a good start
-```
 
 RUNNING
 --------
@@ -338,16 +221,11 @@ kill -HUP  "$(cat storagefancontrol.pid)"   # reload config, keep controller sta
 kill -TERM "$(cat storagefancontrol.pid)"   # stop, setting fans to pwm_safety
 ```
 
-Only one instance can run at a time; a second exits immediately. The guard is the
-`flock` on `.lock`, not the pid file, so a stale `storagefancontrol.pid` left by
-an unclean shutdown is harmless.
 
 Drives are polled with `smartctl -n standby`, so sleeping drives are left asleep
 and simply report no temperature. If *no* drive can be read at all — smartctl
 missing, for instance — the script holds the current fan speed and logs an error
 rather than treating the absence of readings as "cold" and winding the fans down.
-
-
 
 TESTS
 -----
@@ -359,14 +237,3 @@ python3 -m unittest test_mqtt_handler -v
 Standard library only, with a stub in place of paho-mqtt, so it runs on the NAS
 as well as on a workstation and needs nothing installed.
 
-The stub reproduces the two paho behaviours that have caused real faults here.
-A publish made before the broker's CONNACK arrives is *dropped*, not queued, so
-discovery published straight after `connect()` never reached Home Assistant and
-the entities never appeared, while the readings that followed a second later
-published fine. And `connect()` resolves the broker's name on the calling
-thread, so a NAS that booted before DNS was up raised `Temporary failure in
-name resolution` and ran the rest of the week with MQTT silently dead.
-
-Both are now pinned by tests: the stub's `connect()` raises `EAI_NONAME`, so
-going back to a synchronous connect fails the suite, and discovery is asserted
-to publish only from `on_connect`.
